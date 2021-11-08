@@ -1,5 +1,5 @@
 {
-  description = "A very basic flake";
+  description = "Christmas gift drawing application";
   inputs.haskellNix.url = "github:input-output-hk/haskell.nix";
   inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
@@ -25,10 +25,11 @@
                     };
                     # Non-Haskell shell tools go here
                     shell.buildInputs = with pkgs; [
-                      nixpkgs-fmt
+                      haskellPackages.record-dot-preprocessor
+                      # ormolu
                     ];
                     # This adds `js-unknown-ghcjs-cabal` to the shell.
-                    shell.crossPlatform = p: [ p.ghcjs ];
+                    # shell.crossPlatform = p: [ p.ghcjs ];
                   };
               }
             )
@@ -36,12 +37,12 @@
           pkgs = import nixpkgs { inherit system overlays; inherit (haskellNix) config; };
           flake = pkgs.helloProject.flake {
             # This adds support for `nix build .#js-unknown-ghcjs-cabal:hello:exe:hello`
-            crossPlatforms = p: [ p.ghcjs ];
+            # crossPlatforms = p: [ p.ghcjs ];
           };
         in
           flake // {
             # Built by `nix build .`
-            defaultPackage = flake.packages."hello:exe:hello";
+            defaultPackage = flake.packages."christmas-gift-drawing:exe:christmas-gift-drawing";
           }
     );
 }
