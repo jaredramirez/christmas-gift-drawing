@@ -25,6 +25,7 @@
                     };
                     # Non-Haskell shell tools go here
                     shell.buildInputs = with pkgs; [
+                      zlib
                       haskellPackages.record-dot-preprocessor
                       # ormolu
                     ];

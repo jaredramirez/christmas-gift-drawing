@@ -1,15 +1,21 @@
 {-# OPTIONS_GHC -fplugin=RecordDotPreprocessor #-}
-{-# LANGUAGE DuplicateRecordFields, TypeApplications, FlexibleContexts, DataKinds, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, UndecidableInstances, GADTs, NamedFieldPuns #-}
+{-# LANGUAGE DuplicateRecordFields, TypeApplications, FlexibleContexts, DataKinds, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, UndecidableInstances, GADTs, NamedFieldPuns, OverloadedStrings #-}
 
 module Main where
 
 import Control.Monad (foldM, replicateM)
 import qualified Data.Array as Array
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as CBS
 import Data.Function ((&))
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe)
+import Network.HTTP.Simple as HTTP
+import Network.HTTP.Types.Status as HTTPStatus
+import qualified System.Environment as Env
 import System.Random.Stateful (uniformRM, globalStdGen)
 
 
@@ -54,7 +60,7 @@ uniqRandomizeAndPair toKey list pairs =
     randomize list
         >>= \next ->
             let nextPairs = pair next
-                nextAndPrevPairs = pairs ++ nextPairs
+                nextAndPrevPairs = pairs <> nextPairs
                 uniqNextPairs =
                     List.nubBy
                         (\(a1, a2) (b1, b2) ->
@@ -73,7 +79,7 @@ group :: Ord a => [(a,b)] -> [(a, [b])]
 group list =
     list
         & fmap (\(a, b) -> (a, [b]))
-        & Map.fromListWith (++)
+        & Map.fromListWith (<>)
         & Map.toList
 
 
@@ -117,15 +123,15 @@ areAllValuesUniqForKey toKey list =
 
 
 data Person =
-    Person { name :: String, phone :: String }
+    Person { name :: ByteString, phone :: ByteString }
     deriving (Show, Eq, Ord)
 
 
 data GiftsT person =
     Gifts
-        { big1 :: person
-        , big2 :: person
-        , small :: person
+        { small1 :: person
+        , small2 :: person
+        , big :: person
         , book :: person
         }
     deriving (Show)
@@ -146,9 +152,9 @@ setGiftsFromList pairs setGifts giftsMap =
 giftsMaybeToGifts :: GiftMaybe -> Maybe Gifts
 giftsMaybeToGifts giftsMaybe =
     pure Gifts
-        <*> giftsMaybe.big1
-        <*> giftsMaybe.big2
-        <*> giftsMaybe.small
+        <*> giftsMaybe.small1
+        <*> giftsMaybe.small2
+        <*> giftsMaybe.big
         <*> giftsMaybe.book
 
 
@@ -156,18 +162,18 @@ assignGifts :: [Person] -> IO (Map Person Gifts)
 assignGifts people = do
     let uniqRandomizeAndPairA = uniqRandomizeAndPair (.name) people
 
-    big1GiftsList <- uniqRandomizeAndPairA []
-    big2GiftsList <- uniqRandomizeAndPairA big1GiftsList
-    smallGiftsList <- uniqRandomizeAndPairA (big1GiftsList ++ big2GiftsList)
-    bookGiftsList <- uniqRandomizeAndPairA (big1GiftsList ++ big2GiftsList ++ smallGiftsList)
+    small1GiftsList <- uniqRandomizeAndPairA []
+    small2GiftsList <- uniqRandomizeAndPairA small1GiftsList
+    bigGiftsList <- uniqRandomizeAndPairA (small1GiftsList <> small2GiftsList)
+    bookGiftsList <- uniqRandomizeAndPairA (small1GiftsList <> small2GiftsList <> bigGiftsList)
 
     giftsMap <-
         people
             & map (\p -> (p, Gifts Nothing Nothing Nothing Nothing))
             & Map.fromList
-            & setGiftsFromList big1GiftsList (\p giftsMaybe -> giftsMaybe{big1 = Just p})
-            & setGiftsFromList big2GiftsList (\p giftsMaybe -> giftsMaybe{big2 = Just p})
-            & setGiftsFromList smallGiftsList (\p giftsMaybe -> giftsMaybe{small = Just p})
+            & setGiftsFromList small1GiftsList (\p giftsMaybe -> giftsMaybe{small1 = Just p})
+            & setGiftsFromList small2GiftsList (\p giftsMaybe -> giftsMaybe{small2 = Just p})
+            & setGiftsFromList bigGiftsList (\p giftsMaybe -> giftsMaybe{big = Just p})
             & setGiftsFromList bookGiftsList (\p giftsMaybe -> giftsMaybe{book = Just p})
             & traverse giftsMaybeToGifts
             & maybe (error "There was a problem assigning gifts") pure
@@ -175,19 +181,48 @@ assignGifts people = do
     pure giftsMap
 
 
-assignmentGiftsToString :: Person -> Gifts -> String
+assignmentGiftsToString :: Person -> Gifts -> ByteString
 assignmentGiftsToString person gifts =
-    "Hey " ++ person.name ++ "! The people you're getting gifts for this Christmas are: \n" ++
-        "Big gift 1: " ++ gifts.big1.name ++ "\n" ++
-        "Big gift 2: " ++ gifts.big2.name ++ "\n" ++
-        "Small gift: " ++ gifts.small.name ++ "\n" ++
-        "Book: " ++ gifts.book.name
+    "Hey " <> person.name <> "! The people you're getting gifts for this Christmas are: \n" <>
+        "Big gift: " <> gifts.big.name <> "\n" <>
+        "Small gift 1: " <> gifts.small1.name <> "\n" <>
+        "Small gift 2: " <> gifts.small2.name <> "\n" <>
+        "Book: " <> gifts.book.name
 
 
-assignmentsToSMSPayload :: Map Person Gifts -> Map Person String
+assignmentsToSMSPayload :: Map Person Gifts -> Map Person ByteString
 assignmentsToSMSPayload giftsMap =
     giftsMap
         & Map.mapWithKey assignmentGiftsToString
+
+
+-- http
+
+
+data SendSMSPayload =
+    SendSMSPayload { to :: ByteString, from :: ByteString, body :: ByteString }
+
+
+data TwilioAuth =
+    TwilioAuth { sid :: ByteString, token :: ByteString }
+
+
+sendSMS :: TwilioAuth -> SendSMSPayload -> IO ()
+sendSMS twilioAuth payload = do
+    initReq <- parseRequest $ "https://api.twilio.com/2010-04-01/Accounts/" <> CBS.unpack twilioAuth.sid <> "/Messages.json"
+    let req = initReq
+                & HTTP.setRequestBasicAuth twilioAuth.sid twilioAuth.token
+                & HTTP.setRequestBodyURLEncoded
+                    [ ( "To", payload.to )
+                    , ( "From", payload.from )
+                    , ( "Body", payload.body )
+                    ]
+    resp <- HTTP.httpBS req
+    if HTTP.getResponseStatus resp == HTTPStatus.created201 then
+        pure ()
+     else
+        error "Invalid status"
+
 
 
 -- data
@@ -195,14 +230,8 @@ assignmentsToSMSPayload giftsMap =
 
 peopleData :: [Person]
 peopleData =
-    [ Person { name = "Caleb", phone = "1-940-703-9602" }
-    , Person { name = "Sophia", phone = "1-940-435-5754" }
-    , Person { name = "Jared", phone = "1-940-368-7410" }
-    , Person { name = "Sam", phone = "1-940-595-5845" }
-    , Person { name = "Alex", phone = "1-940-595-5829" }
-    , Person { name = "Misa", phone = "1-940-435-9542" }
-    , Person { name = "Carlos", phone = "1-940-595-5837" }
-    ]
+    []
+
 
 
 -- put it all together
@@ -210,6 +239,16 @@ peopleData =
 
 main :: IO ()
 main = do
+    twilioSid <- Env.getEnv "TWILIO_SID" & fmap CBS.pack
+    twilioToken <- Env.getEnv "TWILIO_TOKEN" & fmap CBS.pack
+    twilioFrom <- Env.getEnv "TWILIO_FROM_NUMBER" & fmap CBS.pack
+
     assignments <- assignGifts peopleData
     let smsPayloads = assignmentsToSMSPayload assignments
-    mapM_ putStrLn smsPayloads
+        sendSMSApplied to body =
+            sendSMS (TwilioAuth { sid = twilioSid, token = twilioToken })
+                (SendSMSPayload { to = to, from = twilioFrom, body = body })
+    smsPayloads
+        & Map.toList
+        & mapM_ (\(person, body) -> sendSMSApplied person.phone body)
+
