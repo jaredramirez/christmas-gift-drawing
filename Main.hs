@@ -5,6 +5,7 @@ module Main where
 
 import Control.Monad (foldM, replicateM)
 import qualified Data.Array as Array
+import qualified Data.Maybe as Maybe
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as CBS
@@ -178,22 +179,29 @@ assignGifts people = do
             & traverse giftsMaybeToGifts
             & maybe (error "There was a problem assigning gifts") pure
 
-    pure giftsMap
+    pure giftsMap 
 
 
-assignmentGiftsToString :: Person -> Gifts -> ByteString
-assignmentGiftsToString person gifts =
+assignmentGiftsToString :: Map Person Gifts -> Person -> Gifts -> ByteString
+assignmentGiftsToString giftMap person gifts =
+    let
+        giftList = Map.toList giftMap
+        otherSmall1Gift = (fst $ List.head $ List.filter (\(p, v) -> v.small2 == gifts.small1) giftList).name
+        otherSmall2Gift = (fst $ List.head $ List.filter (\(p, v) -> v.small1 == gifts.small2) giftList).name
+    in
     "Hey " <> person.name <> "! The people you're getting gifts for this Christmas are: \n" <>
         "Big gift: " <> gifts.big.name <> "\n" <>
         "Small gift 1: " <> gifts.small1.name <> "\n" <>
         "Small gift 2: " <> gifts.small2.name <> "\n" <>
-        "Book: " <> gifts.book.name
+        "Book: " <> gifts.book.name <> "\n\n" <>
+        "The other person getting " <> gifts.small1.name <> " a small gift is " <> otherSmall1Gift <> "\n" <>
+        "The other person getting " <> gifts.small2.name <> " a small gift is " <> otherSmall2Gift
 
 
 assignmentsToSMSPayload :: Map Person Gifts -> Map Person ByteString
 assignmentsToSMSPayload giftsMap =
     giftsMap
-        & Map.mapWithKey assignmentGiftsToString
+        & Map.mapWithKey (assignmentGiftsToString giftsMap)
 
 
 -- http
@@ -230,8 +238,7 @@ sendSMS twilioAuth payload = do
 
 peopleData :: [Person]
 peopleData =
-    []
-
+    [ ]
 
 
 -- put it all together
@@ -248,6 +255,7 @@ main = do
         sendSMSApplied to body =
             sendSMS (TwilioAuth { sid = twilioSid, token = twilioToken })
                 (SendSMSPayload { to = to, from = twilioFrom, body = body })
+    -- print smsPayloads
     smsPayloads
         & Map.toList
         & mapM_ (\(person, body) -> sendSMSApplied person.phone body)
