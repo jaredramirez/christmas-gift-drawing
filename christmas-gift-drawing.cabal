@@ -29,7 +29,5 @@ executable christmas-gift-drawing
   		     , http-conduit
   		     , http-types
   		     , random
-  		     , record-dot-preprocessor
-  		     , record-hasfield
   -- hs-source-dirs:
   default-language:    Haskell2010

@@ -6,10 +6,11 @@
       in {
         devShells = {
           default = pkgs.mkShell {
-            NIX_PATH = "nixpkgs=${pkgs.path}";
             buildInputs = with pkgs; [
-              cabal-install
+              haskellPackages.cabal-install
               haskellPackages.record-dot-preprocessor
+              haskellPackages.haskell-language-server
+              haskellPackages.fourmolu
               zlib
             ];
           };
