@@ -1,14 +1,8 @@
-build-shell:
+build:
 	cabal build christmas-gift-drawing
 	
-run-shell:
-	cabal run christmas-gift-drawing
-	
-repl-shell:
-	cabal repl christmas-gift-drawing
-
-build:
-	nix build .
-	
 run:
-	./result/bin/christmas-gift-drawing
+	build; cabal run christmas-gift-drawing
+	
+repl:
+	cabal repl christmas-gift-drawing

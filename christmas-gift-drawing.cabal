@@ -21,7 +21,7 @@ executable christmas-gift-drawing
   main-is:             Main.hs
   -- other-modules:
   -- other-extensions:
-  build-depends:       base >=4.14 && <4.15
+  build-depends:       base >=4.14 && <5
   		     , aeson
   		     , array
   		     , bytestring

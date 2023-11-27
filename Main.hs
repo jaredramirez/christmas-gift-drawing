@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fplugin=RecordDotPreprocessor #-}
-{-# LANGUAGE DuplicateRecordFields, TypeApplications, FlexibleContexts, DataKinds, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, UndecidableInstances, GADTs, NamedFieldPuns, OverloadedStrings #-}
+{-# LANGUAGE TypeOperators, DuplicateRecordFields, TypeApplications, FlexibleContexts, DataKinds, MultiParamTypeClasses, TypeSynonymInstances, FlexibleInstances, UndecidableInstances, GADTs, NamedFieldPuns, OverloadedStrings #-}
 
 module Main where
 
@@ -229,7 +229,7 @@ sendSMS twilioAuth payload = do
     if HTTP.getResponseStatus resp == HTTPStatus.created201 then
         pure ()
      else
-        error "Invalid status"
+        error $ "Invalid status: " ++ show resp
 
 
 
