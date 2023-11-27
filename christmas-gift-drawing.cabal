@@ -23,11 +23,13 @@ executable christmas-gift-drawing
   -- other-extensions:
   build-depends:       base >=4.14 && <5
   		     , aeson
+  		     , aeson-casing
   		     , array
   		     , bytestring
   		     , containers
   		     , http-conduit
   		     , http-types
-  		     , random
+           , text
+  		     , rando
   -- hs-source-dirs:
   default-language:    Haskell2010

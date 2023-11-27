@@ -1,4 +1,7 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -7,36 +10,40 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Main where
 
-import Control.Monad (foldM, replicateM)
+import qualified Control.Exception as Exc
+import Control.Monad (foldM, replicateM, void)
+import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Casing as Aeson
 import qualified Data.Array as Array
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as CBS
+import qualified Data.ByteString.Lazy as BSL
 import Data.Function ((&))
+import Data.List ((\\))
 import qualified Data.List as List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (listToMaybe)
 import qualified Data.Maybe as Maybe
-import Network.HTTP.Simple as HTTP
-import Network.HTTP.Types.Status as HTTPStatus
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.IO as Text
+import Data.Typeable (Typeable)
+import Debug.Trace (traceM)
+import GHC.Generics (Generic)
+import qualified Network.HTTP.Simple as HTTP
+import qualified Network.HTTP.Types.Status as HTTPStatus
+import qualified Rando
 import qualified System.Environment as Env
-import System.Random.Stateful (globalStdGen, uniformRM)
 
 -- list randomization and pairing
-
-randomize :: [a] -> IO [a]
-randomize list = do
-    randomNumbers <- replicateM (length list) $ uniformRM (1 :: Int, 100000) globalStdGen
-    randomNumbers
-        & zip list
-        & List.sortOn snd
-        & fmap fst
-        & pure
 
 pair :: [a] -> [(a, a)]
 pair list =
@@ -53,14 +60,9 @@ pair list =
             []
             (Array.assocs arr)
 
-randomizeAndPair :: [a] -> IO [(a, a)]
-randomizeAndPair list =
-    randomize list
-        & fmap pair
-
 uniqRandomizeAndPair :: (Eq k) => (a -> k) -> [a] -> [(a, a)] -> IO [(a, a)]
 uniqRandomizeAndPair toKey list pairs =
-    randomize list
+    Rando.shuffle list
         >>= \next ->
             let nextPairs = pair next
                 nextAndPrevPairs = pairs <> nextPairs
@@ -74,13 +76,6 @@ uniqRandomizeAndPair toKey list pairs =
              in if length nextAndPrevPairs == length uniqNextPairs
                     then pure nextPairs
                     else uniqRandomizeAndPair toKey list pairs
-
-group :: (Ord a) => [(a, b)] -> [(a, [b])]
-group list =
-    list
-        & fmap (\(a, b) -> (a, [b]))
-        & Map.fromListWith (<>)
-        & Map.toList
 
 -- validation
 
@@ -112,8 +107,8 @@ areAllValuesUniqForKey toKey =
 
 -- types
 
-data Person = Person {name :: ByteString, phone :: ByteString}
-    deriving (Show, Eq, Ord)
+data Person = Person {name :: Text, email :: Text}
+    deriving (Show, Eq, Ord, Generic, FromJSON)
 
 data GiftsT person = Gifts
     { small1 :: person
@@ -161,69 +156,123 @@ assignGifts people = do
         & traverse giftsMaybeToGifts
         & maybe (error "There was a problem assigning gifts") pure
 
-assignmentGiftsToString :: Map Person Gifts -> Person -> Gifts -> ByteString
-assignmentGiftsToString giftMap person gifts =
-    let
-        giftList = Map.toList giftMap
-        otherSmall1Gift = (fst $ List.head $ List.filter (\(p, v) -> v.small2 == gifts.small1) giftList).name
-        otherSmall2Gift = (fst $ List.head $ List.filter (\(p, v) -> v.small1 == gifts.small2) giftList).name
-     in
-        ("Hey " <> person.name <> "! The people you're getting gifts for this Christmas are: \n")
-            <> ("Big gift: " <> gifts.big.name <> "\n")
-            <> ("Small gift 1: " <> gifts.small1.name <> "\n")
-            <> ("Small gift 2: " <> gifts.small2.name <> "\n")
-            <> ("Book: " <> gifts.book.name <> "\n\n")
-            <> ("The other person getting " <> gifts.small1.name <> " a small gift is " <> otherSmall1Gift <> "\n")
-            <> ("The other person getting " <> gifts.small2.name <> " a small gift is " <> otherSmall2Gift)
-
-assignmentsToSMSPayload :: Map Person Gifts -> Map Person ByteString
-assignmentsToSMSPayload giftsMap =
-    giftsMap
-        & Map.mapWithKey (assignmentGiftsToString giftsMap)
-
 -- http
 
-data SendSMSPayload = SendSMSPayload {to :: ByteString, from :: ByteString, body :: ByteString}
+data SendgridRequestBody templateData = SendgridRequestBody
+    { from :: SendgridRequestBodyEmail
+    , templateId :: Text
+    , personalizations :: [SendgridRequestBodyPersonalization templateData]
+    }
+    deriving (Show, Generic)
 
-data TwilioAuth = TwilioAuth {sid :: ByteString, token :: ByteString}
+instance (ToJSON templateData) => ToJSON (SendgridRequestBody templateData) where
+    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
 
-sendSMS :: TwilioAuth -> SendSMSPayload -> IO ()
-sendSMS twilioAuth payload = do
-    initReq <- parseRequest $ "https://api.twilio.com/2010-04-01/Accounts/" <> CBS.unpack twilioAuth.sid <> "/Messages.json"
-    let req =
+newtype SendgridRequestBodyEmail = SendgridRequestBodyEmail
+    { email :: Text
+    }
+    deriving (Show, Generic)
+
+instance ToJSON SendgridRequestBodyEmail where
+    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
+
+data SendgridRequestBodyPersonalization templateData = SendgridRequestBodyPersonalization
+    { to :: [SendgridRequestBodyEmail]
+    , dynamicTemplateData :: templateData
+    }
+    deriving (Show, Generic)
+
+instance (ToJSON templateData) => ToJSON (SendgridRequestBodyPersonalization templateData) where
+    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
+
+data SendgridRecipient templateData = SendgridRecipient
+    { email :: Text
+    , templateData :: templateData
+    }
+    deriving (Show)
+
+newtype SendgridAuth = SendgridAuth ByteString
+
+data TemplateData = TemplateData
+    { you :: Text
+    , bigGift :: Text
+    , smallGift1 :: Text
+    , smallGift2 :: Text
+    , bookGift :: Text
+    , otherSmallGift1 :: Text
+    , otherSmallGift2 :: Text
+    }
+    deriving (Show, Generic)
+
+instance ToJSON TemplateData where
+    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
+
+aesonFieldLabelModifier :: (String -> String) -> Aeson.Options
+aesonFieldLabelModifier f = Aeson.defaultOptions{Aeson.fieldLabelModifier = f}
+
+sendSendgrid :: (ToJSON templateData) => SendgridAuth -> Text -> [SendgridRecipient templateData] -> IO ()
+sendSendgrid (SendgridAuth apiKey) from recipients =
+    let initReq = HTTP.parseRequestThrow_ "POST https://api.sendgrid.com/v3/mail/send"
+        req =
             initReq
-                & HTTP.setRequestBasicAuth twilioAuth.sid twilioAuth.token
-                & HTTP.setRequestBodyURLEncoded
-                    [ ("To", payload.to)
-                    , ("From", payload.from)
-                    , ("Body", payload.body)
-                    ]
-    resp <- HTTP.httpBS req
-    if HTTP.getResponseStatus resp == HTTPStatus.created201
-        then pure ()
-        else error $ "Invalid status: " ++ show resp
+                & HTTP.setRequestBearerAuth apiKey
+                & HTTP.setRequestBodyJSON
+                    ( SendgridRequestBody
+                        { from = SendgridRequestBodyEmail{email = from}
+                        , templateId = "d-8a8a220083e745d3bd4422d957b1cfaa"
+                        , personalizations =
+                            map
+                                ( \recipient ->
+                                    SendgridRequestBodyPersonalization
+                                        { to = [SendgridRequestBodyEmail{email = recipient.email}]
+                                        , dynamicTemplateData = recipient.templateData
+                                        }
+                                )
+                                recipients
+                        }
+                    )
+     in void $ HTTP.httpBS req
 
--- data
+assignmentsToSendgridRecipients :: Map Person Gifts -> [SendgridRecipient TemplateData]
+assignmentsToSendgridRecipients giftsMap =
+    let giftList = Map.toList giftsMap
+     in giftsMap
+            & Map.mapWithKey
+                ( \person gifts ->
+                    let
+                        otherSmall1Gift = (fst $ List.head $ List.filter (\(p, v) -> p /= person && v.small1 == gifts.small2) giftList).name
+                        otherSmall2Gift = (fst $ List.head $ List.filter (\(p, v) -> p /= person && v.small2 == gifts.small1) giftList).name
+                     in
+                        SendgridRecipient
+                            { email = person.email
+                            , templateData =
+                                TemplateData
+                                    { you = person.name
+                                    , bigGift = gifts.big.name
+                                    , smallGift1 = gifts.small1.name
+                                    , smallGift2 = gifts.small2.name
+                                    , bookGift = gifts.book.name
+                                    , otherSmallGift1 = otherSmall1Gift
+                                    , otherSmallGift2 = otherSmall2Gift
+                                    }
+                            }
+                )
+            & Map.elems
 
-peopleData :: [Person]
-peopleData =
-    []
+personGiftsToString :: Person -> Gifts -> Text
+personGiftsToString person gifts =
+    person.name
+        <> ("\n    Big: " <> gifts.big.name)
+        <> ("\n    Small 1: " <> gifts.small1.name)
+        <> ("\n    Small 2: " <> gifts.small2.name)
+        <> ("\n    Book: " <> gifts.book.name)
 
 -- put it all together
 
 main :: IO ()
 main = do
-    twilioSid <- Env.getEnv "TWILIO_SID" & fmap CBS.pack
-    twilioToken <- Env.getEnv "TWILIO_TOKEN" & fmap CBS.pack
-    twilioFrom <- Env.getEnv "TWILIO_FROM_NUMBER" & fmap CBS.pack
-
-    assignments <- assignGifts peopleData
-    let smsPayloads = assignmentsToSMSPayload assignments
-        sendSMSApplied to body =
-            sendSMS
-                (TwilioAuth{sid = twilioSid, token = twilioToken})
-                (SendSMSPayload{to = to, from = twilioFrom, body = body})
-    -- print smsPayloads
-    smsPayloads
-        & Map.toList
-        & mapM_ (\(person, body) -> sendSMSApplied person.phone body)
+    sendgridApiKey <- Env.getEnv "SENDGRID_API_KEY" & fmap CBS.pack
+    people <- BSL.readFile "people.json" >>= (either undefined pure . Aeson.eitherDecode @[Person])
+    assignments <- assignGifts people
+    let recipients = assignmentsToSendgridRecipients assignments
+    sendSendgrid (SendgridAuth sendgridApiKey) "hello@jaredramirez.omg.lol" recipients
