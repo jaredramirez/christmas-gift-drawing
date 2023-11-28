@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -45,8 +44,13 @@ import qualified System.Environment as Env
 
 -- list randomization and pairing
 
-pair :: [a] -> [(a, a)]
-pair list =
+{- | Given a list, split them into pairs with their neighbors
+The last first and last elements are also paired.
+
+    makePairs [1, 2, 3, 4] == [(1,2),(2,3),(3,4),(4,1)]
+-}
+makePairs :: [a] -> [(a, a)]
+makePairs list =
     let maxIndex = length list - 1
         arr = Array.listArray (0, maxIndex) list
      in foldr
@@ -60,50 +64,37 @@ pair list =
             []
             (Array.assocs arr)
 
-uniqRandomizeAndPair :: (Eq k) => (a -> k) -> [a] -> [(a, a)] -> IO [(a, a)]
-uniqRandomizeAndPair toKey list pairs =
-    Rando.shuffle list
-        >>= \next ->
-            let nextPairs = pair next
-                nextAndPrevPairs = pairs <> nextPairs
-                uniqNextPairs =
-                    List.nubBy
-                        ( \(a1, a2) (b1, b2) ->
-                            toKey a1 == toKey b1
-                                && toKey a2 == toKey b2
-                        )
-                        nextAndPrevPairs
-             in if length nextAndPrevPairs == length uniqNextPairs
-                    then pure nextPairs
-                    else uniqRandomizeAndPair toKey list pairs
+{- | Takes function to determine unique-ness, a list, and a list
+of pairs to avoid, return a list of randomized pairs such that
+for each element A and the resulting list L, (A, _) exist exactly
+once in L and (_, A) exists exactly one in L.
 
--- validation
-
-doesValueCountPerKeyMatch :: (Ord k) => (b -> k) -> Int -> [(a, [b])] -> Bool
-doesValueCountPerKeyMatch toKey expected list =
-    list
-        & concatMap snd
-        & map (\b -> (toKey b, 1))
-        & Map.fromListWith (+)
-        & Map.elems
-        & List.all (== expected)
-
-doesTotalCountMatch :: (Ord k) => (b -> k) -> Int -> [(a, [b])] -> Bool
-doesTotalCountMatch toKey expected list =
-    list
-        & concatMap snd
-        & map (\b -> (toKey b, 1))
-        & Map.fromListWith (+)
-        & Map.elems
-        & sum
-        & (== expected)
-
-areAllValuesUniqForKey :: (Ord k) => (b -> k) -> [(a, [b])] -> Bool
-areAllValuesUniqForKey toKey =
-    List.all
-        ( \(a, bs) ->
-            length bs == length (List.nubBy (\b1 b2 -> toKey b1 == toKey b2) bs)
-        )
+Additinally, this function ensures that it does not generate a pair
+if that pair is in the list of existing pairs.
+-}
+makeRandomizedPairs ::
+    (Eq k) =>
+    -- | Equality test
+    (a -> k) ->
+    -- | List to make pairs of
+    [a] ->
+    -- | Existing pairs
+    [(a, a)] ->
+    IO [(a, a)]
+makeRandomizedPairs toKey list existingPairs = do
+    next <- Rando.shuffle list
+    let nextPairs = makePairs next
+        nextAndPrevPairs = existingPairs <> nextPairs
+        uniqNextPairs =
+            List.nubBy
+                ( \(a1, a2) (b1, b2) ->
+                    toKey a1 == toKey b1
+                        && toKey a2 == toKey b2
+                )
+                nextAndPrevPairs
+    if length nextAndPrevPairs == length uniqNextPairs
+        then pure nextPairs
+        else makeRandomizedPairs toKey list existingPairs
 
 -- types
 
@@ -120,16 +111,18 @@ data GiftsT person = Gifts
 
 type Gifts = GiftsT Person
 
-type GiftMaybe = GiftsT (Maybe Person)
+type GiftsMaybe = GiftsT (Maybe Person)
 
-setGiftsFromList :: [(Person, Person)] -> (Person -> GiftMaybe -> GiftMaybe) -> Map Person GiftMaybe -> Map Person GiftMaybe
+-- | Set the list of pairs for a gift type for each person
+setGiftsFromList :: [(Person, Person)] -> (Person -> GiftsMaybe -> GiftsMaybe) -> Map Person GiftsMaybe -> Map Person GiftsMaybe
 setGiftsFromList pairs setGifts giftsMap =
     foldr
         (\(from, to) -> Map.adjust (setGifts to) from)
         giftsMap
         pairs
 
-giftsMaybeToGifts :: GiftMaybe -> Maybe Gifts
+-- | Convert a gifts of mayse to a maybe of gifts
+giftsMaybeToGifts :: GiftsMaybe -> Maybe Gifts
 giftsMaybeToGifts giftsMaybe =
     Gifts
         <$> giftsMaybe.small1
@@ -137,14 +130,17 @@ giftsMaybeToGifts giftsMaybe =
         <*> giftsMaybe.big
         <*> giftsMaybe.book
 
+{- | Given a list of people, pair them up 4 times for 4 gift types, such that
+each person will always recieve and give 1 gift fo each type
+-}
 assignGifts :: [Person] -> IO (Map Person Gifts)
 assignGifts people = do
-    let uniqRandomizeAndPairA = uniqRandomizeAndPair (.name) people
+    let makeRandomizedPairsA = makeRandomizedPairs (.name) people
 
-    small1GiftsList <- uniqRandomizeAndPairA []
-    small2GiftsList <- uniqRandomizeAndPairA small1GiftsList
-    bigGiftsList <- uniqRandomizeAndPairA (small1GiftsList <> small2GiftsList)
-    bookGiftsList <- uniqRandomizeAndPairA (small1GiftsList <> small2GiftsList <> bigGiftsList)
+    small1GiftsList <- makeRandomizedPairsA []
+    small2GiftsList <- makeRandomizedPairsA small1GiftsList
+    bigGiftsList <- makeRandomizedPairsA (small1GiftsList <> small2GiftsList)
+    bookGiftsList <- makeRandomizedPairsA (small1GiftsList <> small2GiftsList <> bigGiftsList)
 
     people
         & map (,Gifts Nothing Nothing Nothing Nothing)
@@ -156,7 +152,7 @@ assignGifts people = do
         & traverse giftsMaybeToGifts
         & maybe (error "There was a problem assigning gifts") pure
 
--- http
+-- sendgrid setup
 
 data SendgridRequestBody templateData = SendgridRequestBody
     { from :: SendgridRequestBodyEmail
@@ -193,23 +189,11 @@ data SendgridRecipient templateData = SendgridRecipient
 
 newtype SendgridAuth = SendgridAuth ByteString
 
-data TemplateData = TemplateData
-    { you :: Text
-    , bigGift :: Text
-    , smallGift1 :: Text
-    , smallGift2 :: Text
-    , bookGift :: Text
-    , otherSmallGift1 :: Text
-    , otherSmallGift2 :: Text
-    }
-    deriving (Show, Generic)
-
-instance ToJSON TemplateData where
-    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
-
+-- | Modify the aeson field label
 aesonFieldLabelModifier :: (String -> String) -> Aeson.Options
 aesonFieldLabelModifier f = Aeson.defaultOptions{Aeson.fieldLabelModifier = f}
 
+-- | Send a series of email from Sendgrid
 sendSendgrid :: (ToJSON templateData) => SendgridAuth -> Text -> [SendgridRecipient templateData] -> IO ()
 sendSendgrid (SendgridAuth apiKey) from recipients =
     let initReq = HTTP.parseRequestThrow_ "POST https://api.sendgrid.com/v3/mail/send"
@@ -233,6 +217,24 @@ sendSendgrid (SendgridAuth apiKey) from recipients =
                     )
      in void $ HTTP.httpBS req
 
+-- sendgrid template
+
+-- | Template data
+data TemplateData = TemplateData
+    { you :: Text
+    , bigGift :: Text
+    , smallGift1 :: Text
+    , smallGift2 :: Text
+    , bookGift :: Text
+    , otherSmallGift1 :: Text
+    , otherSmallGift2 :: Text
+    }
+    deriving (Show, Generic)
+
+instance ToJSON TemplateData where
+    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
+
+-- | Convert gift asignments to sendgrid template data
 assignmentsToSendgridRecipients :: Map Person Gifts -> [SendgridRecipient TemplateData]
 assignmentsToSendgridRecipients giftsMap =
     let giftList = Map.toList giftsMap
@@ -259,6 +261,8 @@ assignmentsToSendgridRecipients giftsMap =
                 )
             & Map.elems
 
+-- display helpers
+
 personGiftsToString :: Person -> Gifts -> Text
 personGiftsToString person gifts =
     person.name
@@ -272,7 +276,8 @@ personGiftsToString person gifts =
 main :: IO ()
 main = do
     sendgridApiKey <- Env.getEnv "SENDGRID_API_KEY" & fmap CBS.pack
-    people <- BSL.readFile "people.json" >>= (either undefined pure . Aeson.eitherDecode @[Person])
+    people <- BSL.readFile "people.json" >>= (either (error "Problem parsing people.json") pure . Aeson.eitherDecode @[Person])
     assignments <- assignGifts people
+    -- Text.putStrLn $ Text.intercalate "\n" $ map (uncurry personGiftsToString) $ Map.toList assignments
     let recipients = assignmentsToSendgridRecipients assignments
     sendSendgrid (SendgridAuth sendgridApiKey) "hello@jaredramirez.omg.lol" recipients
