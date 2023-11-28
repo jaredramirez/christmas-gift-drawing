@@ -18,18 +18,21 @@ build-type:          Simple
 extra-source-files:  CHANGELOG.md
 
 executable christmas-gift-drawing
-  main-is:             Main.hs
-  -- other-modules:
+  main-is:
+    Main.hs
+  other-modules: 
+    Brevo
   -- other-extensions:
-  build-depends:       base >=4.14 && <5
-  		     , aeson
-  		     , aeson-casing
-  		     , array
-  		     , bytestring
-  		     , containers
-  		     , http-conduit
-  		     , http-types
-           , text
-  		     , rando
+  build-depends:       
+      base >=4.14 && <5
+    , aeson
+    , aeson-casing
+    , array
+    , bytestring
+    , containers
+    , http-conduit
+    , http-types
+    , text
+    , rando
   -- hs-source-dirs:
   default-language:    Haskell2010

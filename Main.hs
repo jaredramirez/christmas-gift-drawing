@@ -14,6 +14,7 @@
 
 module Main where
 
+import qualified Brevo
 import qualified Control.Exception as Exc
 import Control.Monad (foldM, replicateM, void)
 import Data.Aeson (FromJSON, ToJSON)
@@ -152,103 +153,21 @@ assignGifts people = do
         & traverse giftsMaybeToGifts
         & maybe (error "There was a problem assigning gifts") pure
 
--- sendgrid setup
-
-data SendgridRequestBody templateData = SendgridRequestBody
-    { from :: SendgridRequestBodyEmail
-    , templateId :: Text
-    , personalizations :: [SendgridRequestBodyPersonalization templateData]
-    }
-    deriving (Show, Generic)
-
-instance (ToJSON templateData) => ToJSON (SendgridRequestBody templateData) where
-    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
-
-newtype SendgridRequestBodyEmail = SendgridRequestBodyEmail
-    { email :: Text
-    }
-    deriving (Show, Generic)
-
-instance ToJSON SendgridRequestBodyEmail where
-    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
-
-data SendgridRequestBodyPersonalization templateData = SendgridRequestBodyPersonalization
-    { to :: [SendgridRequestBodyEmail]
-    , dynamicTemplateData :: templateData
-    }
-    deriving (Show, Generic)
-
-instance (ToJSON templateData) => ToJSON (SendgridRequestBodyPersonalization templateData) where
-    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
-
-data SendgridRecipient templateData = SendgridRecipient
-    { email :: Text
-    , templateData :: templateData
-    }
-    deriving (Show)
-
-newtype SendgridAuth = SendgridAuth ByteString
-
--- | Modify the aeson field label
-aesonFieldLabelModifier :: (String -> String) -> Aeson.Options
-aesonFieldLabelModifier f = Aeson.defaultOptions{Aeson.fieldLabelModifier = f}
-
--- | Send a series of email from Sendgrid
-sendSendgrid :: (ToJSON templateData) => SendgridAuth -> Text -> [SendgridRecipient templateData] -> IO ()
-sendSendgrid (SendgridAuth apiKey) from recipients =
-    let initReq = HTTP.parseRequestThrow_ "POST https://api.sendgrid.com/v3/mail/send"
-        req =
-            initReq
-                & HTTP.setRequestBearerAuth apiKey
-                & HTTP.setRequestBodyJSON
-                    ( SendgridRequestBody
-                        { from = SendgridRequestBodyEmail{email = from}
-                        , templateId = "d-8a8a220083e745d3bd4422d957b1cfaa"
-                        , personalizations =
-                            map
-                                ( \recipient ->
-                                    SendgridRequestBodyPersonalization
-                                        { to = [SendgridRequestBodyEmail{email = recipient.email}]
-                                        , dynamicTemplateData = recipient.templateData
-                                        }
-                                )
-                                recipients
-                        }
-                    )
-     in void $ HTTP.httpBS req
-
--- sendgrid template
-
--- | Template data
-data TemplateData = TemplateData
-    { you :: Text
-    , bigGift :: Text
-    , smallGift1 :: Text
-    , smallGift2 :: Text
-    , bookGift :: Text
-    , otherSmallGift1 :: Text
-    , otherSmallGift2 :: Text
-    }
-    deriving (Show, Generic)
-
-instance ToJSON TemplateData where
-    toJSON = Aeson.genericToJSON $ aesonFieldLabelModifier Aeson.snakeCase
-
 -- | Convert gift asignments to sendgrid template data
-assignmentsToSendgridRecipients :: Map Person Gifts -> [SendgridRecipient TemplateData]
-assignmentsToSendgridRecipients giftsMap =
+asssignmentsToEmailRecipients :: Map Person Gifts -> [Brevo.Recipient Brevo.SecretSantaTempleteParams]
+asssignmentsToEmailRecipients giftsMap =
     let giftList = Map.toList giftsMap
      in giftsMap
             & Map.mapWithKey
                 ( \person gifts ->
                     let
-                        otherSmall1Gift = (fst $ List.head $ List.filter (\(p, v) -> p /= person && v.small1 == gifts.small2) giftList).name
-                        otherSmall2Gift = (fst $ List.head $ List.filter (\(p, v) -> p /= person && v.small2 == gifts.small1) giftList).name
+                        otherSmall1Gift = (fst $ List.head $ List.filter (\(p, v) -> v.small2 == gifts.small1) giftList).name
+                        otherSmall2Gift = (fst $ List.head $ List.filter (\(p, v) -> v.small1 == gifts.small2) giftList).name
                      in
-                        SendgridRecipient
+                        Brevo.Recipient
                             { email = person.email
-                            , templateData =
-                                TemplateData
+                            , params =
+                                Brevo.SecretSantaTempleteParams
                                     { you = person.name
                                     , bigGift = gifts.big.name
                                     , smallGift1 = gifts.small1.name
@@ -275,9 +194,8 @@ personGiftsToString person gifts =
 
 main :: IO ()
 main = do
-    sendgridApiKey <- Env.getEnv "SENDGRID_API_KEY" & fmap CBS.pack
+    brevoApiKey <- Env.getEnv "BREVO_API_KEY" & fmap CBS.pack
     people <- BSL.readFile "people.json" >>= (either (error "Problem parsing people.json") pure . Aeson.eitherDecode @[Person])
     assignments <- assignGifts people
-    -- Text.putStrLn $ Text.intercalate "\n" $ map (uncurry personGiftsToString) $ Map.toList assignments
-    let recipients = assignmentsToSendgridRecipients assignments
-    sendSendgrid (SendgridAuth sendgridApiKey) "hello@jaredramirez.omg.lol" recipients
+    let recipients = asssignmentsToEmailRecipients assignments
+    Brevo.send brevoApiKey 3 recipients
