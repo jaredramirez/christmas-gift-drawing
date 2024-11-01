@@ -17,12 +17,12 @@ maintainer:          jaredramirez@hey.com
 build-type:          Simple
 extra-source-files:  CHANGELOG.md
 
-executable christmas-gift-drawing
-  main-is:
-    Main.hs
-  other-modules: 
+library
+  exposed-modules:
+    AssignGifts
     Brevo
-  -- other-extensions:
+  hs-source-dirs:
+    src
   build-depends:       
       base >=4.14 && <5
     , aeson
@@ -34,5 +34,39 @@ executable christmas-gift-drawing
     , http-types
     , text
     , rando
-  -- hs-source-dirs:
-  default-language:    Haskell2010
+  default-language: GHC2021
+  ghc-options: -Wall -Wcompat -Werror -Wimplicit-lift -Wmissing-exported-signatures -Wmissing-signatures -Wredundant-bang-patterns -Wredundant-constraints -fwarn-incomplete-patterns -fwarn-incomplete-record-updates -fwarn-incomplete-uni-patterns -fwarn-missing-methods -fwarn-name-shadowing -fconstraint-solver-iterations=10 -threaded -fno-warn-monomorphism-restriction -Wno-unused-packages
+
+executable christmas-gift-drawing-exe
+  main-is:
+    Main.hs
+  hs-source-dirs:
+    app
+  build-depends:       
+      christmas-gift-drawing
+    , base >=4.14 && <5
+    , aeson
+    , aeson-casing
+    , array
+    , bytestring
+    , containers
+    , http-conduit
+    , http-types
+    , text
+    , rando
+  default-language: GHC2021
+  ghc-options: -Wall -Wcompat -Werror -Wimplicit-lift -Wmissing-exported-signatures -Wmissing-signatures -Wredundant-bang-patterns -Wredundant-constraints -fwarn-incomplete-patterns -fwarn-incomplete-record-updates -fwarn-incomplete-uni-patterns -fwarn-missing-methods -fwarn-name-shadowing -fconstraint-solver-iterations=10 -threaded -rtsopts -with-rtsopts=-N -fno-warn-monomorphism-restriction -Wno-unused-packages
+
+
+test-suite christmas-gift-drawing-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  hs-source-dirs:
+    test
+  build-depends:
+      christmas-gift-drawing
+    , base >=4.14 && <5
+    , hspec
+    , QuickCheck
+  default-language: GHC2021
+  ghc-options: -Wall -Wcompat -Wimplicit-lift -Wmissing-exported-signatures -Wmissing-signatures -Wredundant-bang-patterns -Wredundant-constraints -fwarn-incomplete-patterns -fwarn-incomplete-record-updates -fwarn-incomplete-uni-patterns -fwarn-missing-methods -fwarn-name-shadowing -fconstraint-solver-iterations=10 -threaded -rtsopts -with-rtsopts=-N -fno-warn-monomorphism-restriction -Wno-unused-packages

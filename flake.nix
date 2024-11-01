@@ -7,6 +7,7 @@
         devShells = {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
+              haskellPackages.ghcid
               haskellPackages.cabal-install
               haskellPackages.record-dot-preprocessor
               haskellPackages.haskell-language-server

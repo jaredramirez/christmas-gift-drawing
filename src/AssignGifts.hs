@@ -9,40 +9,34 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Main where
+module AssignGifts (
+    assignGifts,
+    asssignmentsToEmailRecipients,
+    personGiftsToString,
+    Person (..),
 
-import qualified Brevo
-import qualified Control.Exception as Exc
-import Control.Monad (foldM, replicateM, void)
-import Data.Aeson (FromJSON, ToJSON)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Casing as Aeson
-import qualified Data.Array as Array
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as CBS
-import qualified Data.ByteString.Lazy as BSL
+    -- * Tests
+    makePairs,
+    makeRandomizedPairs,
+    makeRandomizedPairs',
+) where
+
+import Brevo qualified
+
+import Control.Monad qualified as Monad
+import Data.Aeson (FromJSON)
+import Data.Array qualified as Array
 import Data.Function ((&))
-import Data.List ((\\))
-import qualified Data.List as List
+import Data.List qualified as List
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Maybe (listToMaybe)
-import qualified Data.Maybe as Maybe
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
-import qualified Data.Text as Text
-import qualified Data.Text.IO as Text
-import Data.Typeable (Typeable)
-import Debug.Trace (traceM)
 import GHC.Generics (Generic)
-import qualified Network.HTTP.Simple as HTTP
-import qualified Network.HTTP.Types.Status as HTTPStatus
-import qualified Rando
-import qualified System.Environment as Env
+import Rando qualified
 
+--------------------------------------------------------------------------------
 -- list randomization and pairing
 
 {- | Given a list, split them into pairs with their neighbors
@@ -70,7 +64,56 @@ of pairs to avoid, return a list of randomized pairs such that
 for each element A and the resulting list L, (A, _) exist exactly
 once in L and (_, A) exists exactly one in L.
 
-Additinally, this function ensures that it does not generate a pair
+Additionally, this function ensures that it does not generate a pair
+if that pair is in the list of existing pairs.
+-}
+makeRandomizedPairs' ::
+    (Eq a) =>
+    -- | List to make pairs of
+    [a] ->
+    -- | Existing pairs
+    [(a, a)] ->
+    IO [(a, a)]
+makeRandomizedPairs' = generate
+  where
+    generate list existingPairs = do
+        result <-
+            Monad.foldM
+                ( \mbAcc a -> case mbAcc of
+                    Nothing -> pure Nothing
+                    Just acc -> do
+                        let paired = map snd acc
+                        mbNextPair <-
+                            generatePossiblePair
+                                a
+                                ( list
+                                    & filter (/= a)
+                                    & filter (`notElem` paired)
+                                )
+                                (acc ++ existingPairs)
+                        pure $ fmap (: acc) mbNextPair
+                )
+                (Just [])
+                list
+        case result of
+            Nothing -> generate list existingPairs
+            Just pairs -> pure pairs
+    generatePossiblePair a subList subExistingPairs = do
+        shuffled <- Rando.shuffle subList
+        case shuffled of
+            [] -> pure Nothing
+            b : rest ->
+                let possiblePair = (a, b)
+                 in if possiblePair `notElem` subExistingPairs
+                        then pure $ Just possiblePair
+                        else generatePossiblePair a rest subExistingPairs
+
+{- | Takes function to determine unique-ness, a list, and a list
+of pairs to avoid, return a list of randomized pairs such that
+for each element A and the resulting list L, (A, _) exist exactly
+once in L and (_, A) exists exactly one in L.
+
+Additionally, this function ensures that it does not generate a pair
 if that pair is in the list of existing pairs.
 -}
 makeRandomizedPairs ::
@@ -97,6 +140,7 @@ makeRandomizedPairs toKey list existingPairs = do
         then pure nextPairs
         else makeRandomizedPairs toKey list existingPairs
 
+--------------------------------------------------------------------------------
 -- types
 
 data Person = Person {name :: Text, email :: Text}
@@ -161,8 +205,9 @@ asssignmentsToEmailRecipients giftsMap =
             & Map.mapWithKey
                 ( \person gifts ->
                     let
-                        otherSmall1Gift = (fst $ List.head $ List.filter (\(p, v) -> v.small2 == gifts.small1) giftList).name
-                        otherSmall2Gift = (fst $ List.head $ List.filter (\(p, v) -> v.small1 == gifts.small2) giftList).name
+                        -- TODO: Is this backwards?
+                        otherSmall1Gift = (fst $ List.head $ List.filter (\(_p, v) -> v.small2 == gifts.small1) giftList).name
+                        otherSmall2Gift = (fst $ List.head $ List.filter (\(_p, v) -> v.small1 == gifts.small2) giftList).name
                      in
                         Brevo.Recipient
                             { email = person.email
@@ -180,6 +225,7 @@ asssignmentsToEmailRecipients giftsMap =
                 )
             & Map.elems
 
+--------------------------------------------------------------------------------
 -- display helpers
 
 personGiftsToString :: Person -> Gifts -> Text
@@ -189,13 +235,3 @@ personGiftsToString person gifts =
         <> ("\n    Small 1: " <> gifts.small1.name)
         <> ("\n    Small 2: " <> gifts.small2.name)
         <> ("\n    Book: " <> gifts.book.name)
-
--- put it all together
-
-main :: IO ()
-main = do
-    brevoApiKey <- Env.getEnv "BREVO_API_KEY" & fmap CBS.pack
-    people <- BSL.readFile "people.json" >>= (either (error "Problem parsing people.json") pure . Aeson.eitherDecode @[Person])
-    assignments <- assignGifts people
-    let recipients = asssignmentsToEmailRecipients assignments
-    Brevo.send brevoApiKey 3 recipients

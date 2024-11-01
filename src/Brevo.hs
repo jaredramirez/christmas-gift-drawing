@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -13,18 +14,12 @@
 module Brevo (Recipient (..), SecretSantaTempleteParams (..), send) where
 
 import Control.Monad (void)
-import Data.Aeson (FromJSON, ToJSON)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Casing as Aeson
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as CBS
 import Data.Function ((&))
 import Data.Text (Text)
-import qualified Data.Text as Text
 import GHC.Generics (Generic)
-import qualified Network.HTTP.Simple as HTTP
-import qualified Network.HTTP.Types.Status as HTTPStatus
+import Network.HTTP.Simple qualified as HTTP
 
 data RequestBody params = RequestBody
     { templateId :: Int
@@ -41,7 +36,8 @@ data RequestMessageVersion params = RequestMessageVersion
 newtype RequestTo = RequestTo
     { email :: Text
     }
-    deriving (Show, Generic, ToJSON)
+    deriving stock (Show, Generic)
+    deriving anyclass (ToJSON)
 
 data Recipient params = Recipient
     { email :: Text
