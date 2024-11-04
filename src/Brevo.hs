@@ -21,11 +21,13 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 import Network.HTTP.Simple qualified as HTTP
 
+
 data RequestBody params = RequestBody
     { templateId :: Int
     , messageVersions :: [RequestMessageVersion params]
     }
     deriving (Show, Generic, ToJSON)
+
 
 data RequestMessageVersion params = RequestMessageVersion
     { to :: [RequestTo]
@@ -33,11 +35,13 @@ data RequestMessageVersion params = RequestMessageVersion
     }
     deriving (Show, Generic, ToJSON)
 
+
 newtype RequestTo = RequestTo
     { email :: Text
     }
     deriving stock (Show, Generic)
     deriving anyclass (ToJSON)
+
 
 data Recipient params = Recipient
     { email :: Text
@@ -45,16 +49,17 @@ data Recipient params = Recipient
     }
     deriving (Show)
 
+
 -- | Send a email with customizations via Brevo
-send ::
-    (ToJSON params) =>
-    -- | API Key
-    ByteString ->
-    -- | Template ID
-    Int ->
-    -- | Recipients
-    [Recipient params] ->
-    IO ()
+send
+    :: ToJSON params
+    => ByteString
+    -- ^ API Key
+    -> Int
+    -- ^ Template ID
+    -> [Recipient params]
+    -- ^ Recipients
+    -> IO ()
 send apiKey templateId recipients =
     let initReq = HTTP.parseRequestThrow_ "POST https://api.brevo.com/v3/smtp/email"
         req =
@@ -67,7 +72,7 @@ send apiKey templateId recipients =
                             map
                                 ( \recipient ->
                                     RequestMessageVersion
-                                        { to = [RequestTo{email = recipient.email}]
+                                        { to = [RequestTo {email = recipient.email}]
                                         , params = recipient.params
                                         }
                                 )
@@ -75,6 +80,7 @@ send apiKey templateId recipients =
                         }
                     )
      in void $ HTTP.httpBS req
+
 
 data SecretSantaTempleteParams = SecretSantaTempleteParams
     { you :: Text

@@ -30,12 +30,15 @@ library
     , array
     , bytestring
     , containers
+    , either
     , http-conduit
     , http-types
     , text
     , rando
   default-language: GHC2021
   ghc-options: -Wall -Wcompat -Werror -Wimplicit-lift -Wmissing-exported-signatures -Wmissing-signatures -Wredundant-bang-patterns -Wredundant-constraints -fwarn-incomplete-patterns -fwarn-incomplete-record-updates -fwarn-incomplete-uni-patterns -fwarn-missing-methods -fwarn-name-shadowing -fconstraint-solver-iterations=10 -threaded -fno-warn-monomorphism-restriction -Wno-unused-packages
+  default-extensions:
+    BlockArguments
 
 executable christmas-gift-drawing-exe
   main-is:
@@ -56,6 +59,8 @@ executable christmas-gift-drawing-exe
     , rando
   default-language: GHC2021
   ghc-options: -Wall -Wcompat -Werror -Wimplicit-lift -Wmissing-exported-signatures -Wmissing-signatures -Wredundant-bang-patterns -Wredundant-constraints -fwarn-incomplete-patterns -fwarn-incomplete-record-updates -fwarn-incomplete-uni-patterns -fwarn-missing-methods -fwarn-name-shadowing -fconstraint-solver-iterations=10 -threaded -rtsopts -with-rtsopts=-N -fno-warn-monomorphism-restriction -Wno-unused-packages
+  default-extensions:
+    BlockArguments
 
 
 test-suite christmas-gift-drawing-test
@@ -66,7 +71,12 @@ test-suite christmas-gift-drawing-test
   build-depends:
       christmas-gift-drawing
     , base >=4.14 && <5
+    , containers
+    , monad-loops
     , hspec
     , QuickCheck
   default-language: GHC2021
   ghc-options: -Wall -Wcompat -Wimplicit-lift -Wmissing-exported-signatures -Wmissing-signatures -Wredundant-bang-patterns -Wredundant-constraints -fwarn-incomplete-patterns -fwarn-incomplete-record-updates -fwarn-incomplete-uni-patterns -fwarn-missing-methods -fwarn-name-shadowing -fconstraint-solver-iterations=10 -threaded -rtsopts -with-rtsopts=-N -fno-warn-monomorphism-restriction -Wno-unused-packages
+  default-extensions:
+    BlockArguments
+
