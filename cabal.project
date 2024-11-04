@@ -1,0 +1,3 @@
+packages: christmas-gift-drawing.cabal
+
+multi-repl: True

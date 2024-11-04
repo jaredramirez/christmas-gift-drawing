@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -13,18 +14,13 @@
 module Brevo (Recipient (..), SecretSantaTempleteParams (..), send) where
 
 import Control.Monad (void)
-import Data.Aeson (FromJSON, ToJSON)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Casing as Aeson
+import Data.Aeson (ToJSON)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as CBS
 import Data.Function ((&))
 import Data.Text (Text)
-import qualified Data.Text as Text
 import GHC.Generics (Generic)
-import qualified Network.HTTP.Simple as HTTP
-import qualified Network.HTTP.Types.Status as HTTPStatus
+import Network.HTTP.Simple qualified as HTTP
+
 
 data RequestBody params = RequestBody
     { templateId :: Int
@@ -32,16 +28,20 @@ data RequestBody params = RequestBody
     }
     deriving (Show, Generic, ToJSON)
 
+
 data RequestMessageVersion params = RequestMessageVersion
     { to :: [RequestTo]
     , params :: params
     }
     deriving (Show, Generic, ToJSON)
 
+
 newtype RequestTo = RequestTo
     { email :: Text
     }
-    deriving (Show, Generic, ToJSON)
+    deriving stock (Show, Generic)
+    deriving anyclass (ToJSON)
+
 
 data Recipient params = Recipient
     { email :: Text
@@ -49,16 +49,17 @@ data Recipient params = Recipient
     }
     deriving (Show)
 
+
 -- | Send a email with customizations via Brevo
-send ::
-    (ToJSON params) =>
-    -- | API Key
-    ByteString ->
-    -- | Template ID
-    Int ->
-    -- | Recipients
-    [Recipient params] ->
-    IO ()
+send
+    :: ToJSON params
+    => ByteString
+    -- ^ API Key
+    -> Int
+    -- ^ Template ID
+    -> [Recipient params]
+    -- ^ Recipients
+    -> IO ()
 send apiKey templateId recipients =
     let initReq = HTTP.parseRequestThrow_ "POST https://api.brevo.com/v3/smtp/email"
         req =
@@ -71,7 +72,7 @@ send apiKey templateId recipients =
                             map
                                 ( \recipient ->
                                     RequestMessageVersion
-                                        { to = [RequestTo{email = recipient.email}]
+                                        { to = [RequestTo {email = recipient.email}]
                                         , params = recipient.params
                                         }
                                 )
@@ -79,6 +80,7 @@ send apiKey templateId recipients =
                         }
                     )
      in void $ HTTP.httpBS req
+
 
 data SecretSantaTempleteParams = SecretSantaTempleteParams
     { you :: Text
