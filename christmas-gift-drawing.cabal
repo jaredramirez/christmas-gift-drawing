@@ -48,6 +48,7 @@ executable christmas-gift-drawing-exe
     , aeson
     , aeson-casing
     , array
+    , base64
     , bytestring
     , containers
     , http-conduit

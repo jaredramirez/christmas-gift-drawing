@@ -4,7 +4,7 @@ build:
 	cabal build christmas-gift-drawing
 	
 run: build
-	cabal run christmas-gift-drawing
+	cabal run christmas-gift-drawing-exe
 	
 repl:
 	cabal repl christmas-gift-drawing

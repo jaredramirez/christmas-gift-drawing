@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -10,12 +11,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use <$>" #-}
 
 module AssignGifts (
     assignGifts,
-    asssignmentsToEmailRecipients,
     personGiftsToString,
+    giftsToGiftsText,
     Person (..),
+    Gifts,
+    GiftsT (..),
 
     -- * Tests
     makePairs,
@@ -23,10 +29,8 @@ module AssignGifts (
     makeRandomizedPairs',
 ) where
 
-import Brevo qualified
-
 import Control.Monad qualified as Monad
-import Data.Aeson (FromJSON)
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Array qualified as Array
 import Data.Function ((&))
 import Data.List qualified as List
@@ -143,8 +147,9 @@ makeRandomizedPairs toKey list existingPairs = do
 --------------------------------------------------------------------------------
 -- types
 
-data Person = Person {name :: Text, email :: Text}
-    deriving (Show, Eq, Ord, Generic, FromJSON)
+newtype Person = Person {name :: Text}
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (FromJSON)
 
 data GiftsT person = Gifts
     { small1 :: person
@@ -152,7 +157,9 @@ data GiftsT person = Gifts
     , big :: person
     , book :: person
     }
-    deriving (Show)
+    deriving (Show, Generic)
+
+instance (ToJSON p) => ToJSON (GiftsT p)
 
 type Gifts = GiftsT Person
 
@@ -175,6 +182,16 @@ giftsMaybeToGifts giftsMaybe =
         <*> giftsMaybe.big
         <*> giftsMaybe.book
 
+-- | Convert a gifts of people to just their text counterparts
+giftsToGiftsText :: Gifts -> GiftsT Text
+giftsToGiftsText gifts =
+    Gifts
+        { small1 = gifts.small1.name
+        , small2 = gifts.small2.name
+        , big = gifts.big.name
+        , book = gifts.book.name
+        }
+
 {- | Given a list of people, pair them up 4 times for 4 gift types, such that
 each person will always recieve and give 1 gift fo each type
 -}
@@ -196,34 +213,6 @@ assignGifts people = do
         & setGiftsFromList bookGiftsList (\p giftsMaybe -> giftsMaybe{book = Just p})
         & traverse giftsMaybeToGifts
         & maybe (error "There was a problem assigning gifts") pure
-
--- | Convert gift asignments to sendgrid template data
-asssignmentsToEmailRecipients :: Map Person Gifts -> [Brevo.Recipient Brevo.SecretSantaTempleteParams]
-asssignmentsToEmailRecipients giftsMap =
-    let giftList = Map.toList giftsMap
-     in giftsMap
-            & Map.mapWithKey
-                ( \person gifts ->
-                    let
-                        -- TODO: Is this backwards?
-                        otherSmall1Gift = (fst $ List.head $ List.filter (\(_p, v) -> v.small2 == gifts.small1) giftList).name
-                        otherSmall2Gift = (fst $ List.head $ List.filter (\(_p, v) -> v.small1 == gifts.small2) giftList).name
-                     in
-                        Brevo.Recipient
-                            { email = person.email
-                            , params =
-                                Brevo.SecretSantaTempleteParams
-                                    { you = person.name
-                                    , bigGift = gifts.big.name
-                                    , smallGift1 = gifts.small1.name
-                                    , smallGift2 = gifts.small2.name
-                                    , bookGift = gifts.book.name
-                                    , otherSmallGift1 = otherSmall1Gift
-                                    , otherSmallGift2 = otherSmall2Gift
-                                    }
-                            }
-                )
-            & Map.elems
 
 --------------------------------------------------------------------------------
 -- display helpers
