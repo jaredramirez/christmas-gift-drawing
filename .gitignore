@@ -3,3 +3,7 @@
 dist-newstyle
 result
 people.json
+.devenv
+devenv.local.nix
+devenv.local.yaml
+last-year.json

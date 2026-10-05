@@ -17,11 +17,15 @@
 
 module AssignGifts (
     assignGifts,
+    assignGiftsWithSeed,
     personGiftsToString,
     giftsToGiftsText,
     Person (..),
     Gifts,
     GiftsT (..),
+    PreviousGifts,
+    giftRecipients,
+    maxRepeatRecipients,
 
     -- * Tests
     makePairs,
@@ -30,15 +34,16 @@ module AssignGifts (
 ) where
 
 import Control.Monad qualified as Monad
+import Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Array qualified as Array
 import Data.Function ((&))
-import Data.List qualified as List
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import Rando qualified
+import System.Random (StdGen, mkStdGen, newStdGen)
+import System.Random.Stateful (IOGenM, newIOGenM, uniformShuffleListM)
 
 --------------------------------------------------------------------------------
 -- list randomization and pairing
@@ -78,9 +83,11 @@ makeRandomizedPairs' ::
     -- | Existing pairs
     [(a, a)] ->
     IO [(a, a)]
-makeRandomizedPairs' = generate
+makeRandomizedPairs' list existingPairs = do
+    gen <- newStdGen >>= newIOGenM
+    generate gen list existingPairs
   where
-    generate list existingPairs = do
+    generate gen items excludedPairs = do
         result <-
             Monad.foldM
                 ( \mbAcc a -> case mbAcc of
@@ -89,28 +96,29 @@ makeRandomizedPairs' = generate
                         let paired = map snd acc
                         mbNextPair <-
                             generatePossiblePair
+                                gen
                                 a
-                                ( list
+                                ( items
                                     & filter (/= a)
                                     & filter (`notElem` paired)
                                 )
-                                (acc ++ existingPairs)
+                                (acc ++ excludedPairs)
                         pure $ fmap (: acc) mbNextPair
                 )
                 (Just [])
-                list
+                items
         case result of
-            Nothing -> generate list existingPairs
+            Nothing -> generate gen items excludedPairs
             Just pairs -> pure pairs
-    generatePossiblePair a subList subExistingPairs = do
-        shuffled <- Rando.shuffle subList
+    generatePossiblePair gen a subList subExistingPairs = do
+        shuffled <- uniformShuffleListM subList gen
         case shuffled of
             [] -> pure Nothing
             b : rest ->
                 let possiblePair = (a, b)
                  in if possiblePair `notElem` subExistingPairs
                         then pure $ Just possiblePair
-                        else generatePossiblePair a rest subExistingPairs
+                        else generatePossiblePair gen a rest subExistingPairs
 
 {- | Takes function to determine unique-ness, a list, and a list
 of pairs to avoid, return a list of randomized pairs such that
@@ -130,19 +138,34 @@ makeRandomizedPairs ::
     [(a, a)] ->
     IO [(a, a)]
 makeRandomizedPairs toKey list existingPairs = do
-    next <- Rando.shuffle list
+    gen <- newStdGen >>= newIOGenM
+    makeRandomizedPairsWithGen gen toKey list existingPairs
+
+makeRandomizedPairsWithGen :: (Eq k) => IOGenM StdGen -> (a -> k) -> [a] -> [(a, a)] -> IO [(a, a)]
+makeRandomizedPairsWithGen gen toKey list existingPairs =
+    tryRandomizedPairs gen toKey list existingPairs
+        >>= maybe (makeRandomizedPairsWithGen gen toKey list existingPairs) pure
+
+-- | Like 'makeRandomizedPairsWithGen', but gives up after a number of attempts
+makeRandomizedPairsBounded :: (Eq k) => Int -> IOGenM StdGen -> (a -> k) -> [a] -> [(a, a)] -> IO (Maybe [(a, a)])
+makeRandomizedPairsBounded attempts gen toKey list existingPairs
+    | attempts <= 0 = pure Nothing
+    | otherwise =
+        tryRandomizedPairs gen toKey list existingPairs
+            >>= maybe (makeRandomizedPairsBounded (attempts - 1) gen toKey list existingPairs) (pure . Just)
+
+-- | Shuffle once, returning the pairs only if none of them are in the existing pairs
+tryRandomizedPairs :: (Eq k) => IOGenM StdGen -> (a -> k) -> [a] -> [(a, a)] -> IO (Maybe [(a, a)])
+tryRandomizedPairs gen toKey list existingPairs = do
+    next <- uniformShuffleListM list gen
     let nextPairs = makePairs next
-        nextAndPrevPairs = existingPairs <> nextPairs
-        uniqNextPairs =
-            List.nubBy
-                ( \(a1, a2) (b1, b2) ->
-                    toKey a1 == toKey b1
-                        && toKey a2 == toKey b2
-                )
-                nextAndPrevPairs
-    if length nextAndPrevPairs == length uniqNextPairs
-        then pure nextPairs
-        else makeRandomizedPairs toKey list existingPairs
+        pairKey (a1, a2) = (toKey a1, toKey a2)
+        -- Existing pairs may overlap each other, so only check the new ones
+        existingKeys = map pairKey existingPairs
+    pure $
+        if all ((`notElem` existingKeys) . pairKey) nextPairs
+            then Just nextPairs
+            else Nothing
 
 --------------------------------------------------------------------------------
 -- types
@@ -157,11 +180,23 @@ data GiftsT person = Gifts
     , big :: person
     , book :: person
     }
-    deriving (Show, Generic)
+    deriving (Show, Eq, Generic)
 
 instance (ToJSON p) => ToJSON (GiftsT p)
 
+instance (FromJSON p) => FromJSON (GiftsT p)
+
 type Gifts = GiftsT Person
+
+-- | A previous draw: who each person gave to, keyed by giver name
+type PreviousGifts = Map Text (GiftsT Text)
+
+-- | The most people anyone may give to again from the previous draw
+maxRepeatRecipients :: Int
+maxRepeatRecipients = 2
+
+giftRecipients :: GiftsT p -> [p]
+giftRecipients gifts = [gifts.small1, gifts.small2, gifts.big, gifts.book]
 
 type GiftsMaybe = GiftsT (Maybe Person)
 
@@ -195,24 +230,66 @@ giftsToGiftsText gifts =
 {- | Given a list of people, pair them up 4 times for 4 gift types, such that
 each person will always recieve and give 1 gift fo each type
 -}
-assignGifts :: [Person] -> IO (Map Person Gifts)
-assignGifts people = do
-    let makeRandomizedPairsA = makeRandomizedPairs (.name) people
+assignGifts :: PreviousGifts -> [Person] -> IO (Map Person Gifts)
+assignGifts previous people = do
+    gen <- newStdGen >>= newIOGenM
+    assignGiftsWithGen gen previous people
 
-    small1GiftsList <- makeRandomizedPairsA []
-    small2GiftsList <- makeRandomizedPairsA small1GiftsList
-    bigGiftsList <- makeRandomizedPairsA (small1GiftsList <> small2GiftsList)
-    bookGiftsList <- makeRandomizedPairsA (small1GiftsList <> small2GiftsList <> bigGiftsList)
+{- | Reproduce a draw using the same seed, previous draw, and ordered list of
+people.
+-}
+assignGiftsWithSeed :: Int -> PreviousGifts -> [Person] -> IO (Map Person Gifts)
+assignGiftsWithSeed seed previous people = do
+    gen <- newIOGenM (mkStdGen seed)
+    assignGiftsWithGen gen previous people
 
-    people
-        & map (,Gifts Nothing Nothing Nothing Nothing)
-        & Map.fromList
-        & setGiftsFromList small1GiftsList (\p giftsMaybe -> giftsMaybe{small1 = Just p})
-        & setGiftsFromList small2GiftsList (\p giftsMaybe -> giftsMaybe{small2 = Just p})
-        & setGiftsFromList bigGiftsList (\p giftsMaybe -> giftsMaybe{big = Just p})
-        & setGiftsFromList bookGiftsList (\p giftsMaybe -> giftsMaybe{book = Just p})
-        & traverse giftsMaybeToGifts
-        & maybe (error "There was a problem assigning gifts") pure
+{- | Draw until no one gives the same gift type to the same person as in the
+previous draw, and no one gives to more than 'maxRepeatRecipients' of their
+previous recipients.
+-}
+assignGiftsWithGen :: IOGenM StdGen -> PreviousGifts -> [Person] -> IO (Map Person Gifts)
+assignGiftsWithGen gen previous people = do
+    let previousPairs giftType =
+            [ (Person giver, Person (giftType gifts))
+            | (giver, gifts) <- Map.toList previous
+            ]
+        -- Earlier categories can leave no valid cycle for a later one, so
+        -- give up on a category after a while and restart the whole draw
+        makeRandomizedPairsA giftType existing =
+            makeRandomizedPairsBounded 10000 gen (.name) people (previousPairs giftType <> existing)
+        retry = assignGiftsWithGen gen previous people
+
+    mbAssignments <- runMaybeT $ do
+        small1GiftsList <- MaybeT $ makeRandomizedPairsA (.small1) []
+        small2GiftsList <- MaybeT $ makeRandomizedPairsA (.small2) small1GiftsList
+        bigGiftsList <- MaybeT $ makeRandomizedPairsA (.big) (small1GiftsList <> small2GiftsList)
+        bookGiftsList <- MaybeT $ makeRandomizedPairsA (.book) (small1GiftsList <> small2GiftsList <> bigGiftsList)
+
+        people
+            & map (,Gifts Nothing Nothing Nothing Nothing)
+            & Map.fromList
+            & setGiftsFromList small1GiftsList (\p giftsMaybe -> giftsMaybe{small1 = Just p})
+            & setGiftsFromList small2GiftsList (\p giftsMaybe -> giftsMaybe{small2 = Just p})
+            & setGiftsFromList bigGiftsList (\p giftsMaybe -> giftsMaybe{big = Just p})
+            & setGiftsFromList bookGiftsList (\p giftsMaybe -> giftsMaybe{book = Just p})
+            & traverse giftsMaybeToGifts
+            & maybe (error "There was a problem assigning gifts") pure
+
+    case mbAssignments of
+        Just assignments | withinRepeatLimit previous assignments -> pure assignments
+        _ -> retry
+
+withinRepeatLimit :: PreviousGifts -> Map Person Gifts -> Bool
+withinRepeatLimit previous =
+    all
+        ( \(giver, gifts) -> case Map.lookup giver.name previous of
+            Nothing -> True
+            Just previousGifts ->
+                let recipients = map (.name) (giftRecipients gifts)
+                    repeats = filter (`elem` recipients) (giftRecipients previousGifts)
+                 in length repeats <= maxRepeatRecipients
+        )
+        . Map.toList
 
 --------------------------------------------------------------------------------
 -- display helpers
