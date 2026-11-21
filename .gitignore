@@ -7,3 +7,4 @@ devenv.local.yaml
 last-year.json
 fuzz-out
 .roc-fuzz
+/main

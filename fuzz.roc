@@ -13,8 +13,8 @@ Input : { seed : U32, extra_people : U8 }
 people_for : U64 -> List(Str)
 people_for = |count| List.from_iter((0.U64).until(count)).map(|n| n.to_str())
 
-## A draw is valid, inverts correctly, and a follow-up draw with one more
-## person respects it as the previous draw
+## A draw is valid and inverts correctly, and follow-up draws with the same
+## people or one more respect it as the previous draw
 test! : Input => Fuzz.Outcome
 test! = |{ seed, extra_people }| {
 	count = Draw.min_people + (extra_people % 8).to_u64()

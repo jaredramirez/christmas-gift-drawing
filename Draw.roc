@@ -27,6 +27,15 @@ Draw := [].{
 	max_repeat_recipients : U64
 	max_repeat_recipients = 2
 
+	## Whole draws to try before giving up on the repeat limit
+	max_draws : U64
+	max_draws = 1000
+
+	## Shuffles to try for one gift type before restarting the whole draw
+	max_shuffles : U64
+	max_shuffles = 10_000
+
+	## Each gift type's name and field, in the order they are drawn
 	gift_types : List((Str, (Gifts(Str) -> Str)))
 	gift_types = [
 		("small1", |gifts| gifts.small1),
@@ -61,25 +70,31 @@ Draw := [].{
 			return Err(TooFewPeople(count))
 		}
 
-		var $duplicates = []
-		for name in people {
-			if people.count_if(|other| other == name) > 1 and !$duplicates.contains(name) {
-				$duplicates = $duplicates.append(name)
-			}
-		}
-		duplicates = $duplicates
+		duplicates = unique(people.keep_if(|name| people.count_if(|other| other == name) > 1))
 		if !duplicates.is_empty() {
 			return Err(DuplicateNames(duplicates))
 		}
 
 		previous_names = previous.to_list().join_map(|(giver, gifts)| [giver].concat(recipients(gifts)))
-		unknown = previous_names.keep_if(|name| !people.contains(name))
+		unknown = unique(previous_names.keep_if(|name| !people.contains(name)))
 		if !unknown.is_empty() {
 			return Err(UnknownPreviousNames(unknown))
 		}
 
 		check_previous(people, previous)?
-		draw_valid(people, previous, Random.seed(seed), 1000)
+		draw_valid(people, previous, Random.seed(seed))
+	}
+
+	## The items in their first order, without repeats
+	unique : List(Str) -> List(Str)
+	unique = |items| {
+		var $seen = []
+		for item in items {
+			if !$seen.contains(item) {
+				$seen = $seen.append(item)
+			}
+		}
+		$seen
 	}
 
 	## Reject previous draws that leave no room for a new one, using counting
@@ -120,9 +135,10 @@ Draw := [].{
 	}
 
 	## Draw until one is within the repeat limit, or give up
-	draw_valid : List(Str), Assignments, Random.State, U64 -> Try(Assignments, DrawErr)
-	draw_valid = |people, previous, seed, var $attempts_left| {
+	draw_valid : List(Str), Assignments, Random.State -> Try(Assignments, DrawErr)
+	draw_valid = |people, previous, seed| {
 		var $seed = seed
+		var $attempts_left = max_draws
 		while $attempts_left > 0 {
 			attempt = draw_once(people, previous, $seed)
 			$seed = attempt.state
@@ -137,62 +153,54 @@ Draw := [].{
 		Err(GaveUp)
 	}
 
-	## Pair up each gift type in turn. Earlier gift types can leave no valid
-	## pairing for a later one, so this can fail.
+	## Pair up each gift type in turn, so no one gives the same gift type to the
+	## same person as last time or gives two gifts to one person. Earlier gift
+	## types can leave no valid pairing for a later one, so this can fail.
 	draw_once : List(Str), Assignments, Random.State -> { value : Try(Assignments, [GaveUp]), state : Random.State }
 	draw_once = |people, previous, seed| {
-		previous_pairs = |gift_type| previous.to_list().map(|(giver, gifts)| (giver, gift_type(gifts)))
-
-		small1 = random_pairs(people, previous_pairs(|g| g.small1), seed)
-		small1_pairs = match small1.value {
-			Ok(pairs) => pairs
-			Err(GaveUp) => return { value: Err(GaveUp), state: small1.state }
+		var $seed = seed
+		var $drawn = []
+		for (_, gift_type) in gift_types {
+			last_time = previous.to_list().map(|(giver, gifts)| (giver, gift_type(gifts)))
+			attempt = random_pairs(people, last_time.concat($drawn.join()), $seed)
+			$seed = attempt.state
+			match attempt.value {
+				Ok(pairs) => {
+					$drawn = $drawn.append(pairs)
+				}
+				Err(GaveUp) => return { value: Err(GaveUp), state: $seed }
+			}
 		}
 
-		small2 = random_pairs(people, previous_pairs(|g| g.small2).concat(small1_pairs), small1.state)
-		small2_pairs = match small2.value {
-			Ok(pairs) => pairs
-			Err(GaveUp) => return { value: Err(GaveUp), state: small2.state }
-		}
-
-		big = random_pairs(people, previous_pairs(|g| g.big).concat(small1_pairs).concat(small2_pairs), small2.state)
-		big_pairs = match big.value {
-			Ok(pairs) => pairs
-			Err(GaveUp) => return { value: Err(GaveUp), state: big.state }
-		}
-
-		book = random_pairs(
-			people,
-			previous_pairs(|g| g.book).concat(small1_pairs).concat(small2_pairs).concat(big_pairs),
-			big.state,
-		)
-		book_pairs = match book.value {
-			Ok(pairs) => pairs
-			Err(GaveUp) => return { value: Err(GaveUp), state: book.state }
-		}
-
-		recipient_of = |pairs, giver| pairs.find_first(|(g, _)| g == giver).map_ok(|(_, r)| r) ?? giver
+		# $drawn holds one list of (giver, recipient) pairs per gift type, in
+		# gift_types order
+		by_type = $drawn.map(Dict.from_list)
+		recipient_of = |index, giver|
+			match by_type.get(index) {
+				Ok(pairs) => pairs.get(giver) ?? giver
+				Err(_) => giver
+			}
 		assignments = Dict.from_list(
 			people.map(
 				|giver| (
 					giver,
 					{
-						small1: recipient_of(small1_pairs, giver),
-						small2: recipient_of(small2_pairs, giver),
-						big: recipient_of(big_pairs, giver),
-						book: recipient_of(book_pairs, giver),
+						small1: recipient_of(0, giver),
+						small2: recipient_of(1, giver),
+						big: recipient_of(2, giver),
+						book: recipient_of(3, giver),
 					},
 				),
 			),
 		)
-		{ value: Ok(assignments), state: book.state }
+		{ value: Ok(assignments), state: $seed }
 	}
 
 	## Shuffle the people into a cycle, retrying until no pair is excluded
 	random_pairs : List(Str), List((Str, Str)), Random.State -> { value : Try(List((Str, Str)), [GaveUp]), state : Random.State }
 	random_pairs = |people, excluded, seed| {
 		var $seed = seed
-		var $attempts_left = 10_000
+		var $attempts_left = max_shuffles
 		while $attempts_left > 0 {
 			shuffled = Random.step($seed, Random.shuffle(people))
 			$seed = shuffled.state
@@ -205,6 +213,7 @@ Draw := [].{
 		{ value: Err(GaveUp), state: $seed }
 	}
 
+	## No one gives to more than `max_repeat_recipients` previous recipients
 	within_repeat_limit : Assignments, Assignments -> Bool
 	within_repeat_limit = |previous, assignments|
 		assignments.to_list().all(
@@ -315,14 +324,17 @@ expect {
 	}
 }
 
+# make_pairs closes the cycle
 expect Draw.make_pairs([1, 2, 3]) == [(1, 2), (2, 3), (3, 1)]
 expect Draw.make_pairs([]) == []
 
+# The seed decides the draw
 expect {
 	first = Draw.draw(test_people, Dict.empty(), 42)
 	first == Draw.draw(test_people, Dict.empty(), 42) and first != Draw.draw(test_people, Dict.empty(), 123)
 }
 
+# Draws follow the gift rules across seeds
 expect List.from_iter((0.U32).until(20)).all(
 	|seed|
 		match Draw.draw(test_people, Dict.empty(), seed) {
@@ -331,14 +343,16 @@ expect List.from_iter((0.U32).until(20)).all(
 		},
 )
 
+# Bad inputs are rejected before drawing
 expect Draw.draw(["1", "2", "3", "4"], Dict.empty(), 0) == Err(TooFewPeople(4))
 expect Draw.draw(["1", "2", "3", "4", "1"], Dict.empty(), 0) == Err(DuplicateNames(["1"]))
 
 expect {
-	previous = Dict.from_list([("9", { small1: "1", small2: "2", big: "3", book: "4" })])
+	previous = Dict.from_list([("9", { small1: "1", small2: "2", big: "3", book: "9" })])
 	Draw.draw(test_people, previous, 0) == Err(UnknownPreviousNames(["9"]))
 }
 
+# A follow-up draw with a newcomer respects the previous one
 expect {
 	more_people = test_people.append("9")
 	match Draw.draw(test_people, Dict.empty(), 0) {
@@ -354,6 +368,7 @@ expect {
 	}
 }
 
+# gift_givers inverts each gift type
 expect
 	match Draw.draw(test_people, Dict.empty(), 7) {
 		Ok(assignments) => {
@@ -372,6 +387,7 @@ expect
 		Err(_) => False
 	}
 
+# other_givers lists the three other people giving to each recipient
 expect
 	match Draw.draw(test_people, Dict.empty(), 7) {
 		Ok(assignments) => {
@@ -387,10 +403,9 @@ expect
 									by_type.len() == 3
 										and !by_type.contains(gift_type)
 										and by_type.to_list().all(
-											|(other_type, other_giver)|
+											|(_, other_giver)|
 												other_giver != giver
-													and assignments.get(other_giver).map_ok(|g| Draw.recipients(g).contains(recipient)) == Ok(True)
-													and other_type != gift_type,
+													and assignments.get(other_giver).map_ok(|g| Draw.recipients(g).contains(recipient)) == Ok(True),
 										)
 								Err(_) => False
 							}

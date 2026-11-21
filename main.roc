@@ -79,8 +79,8 @@ run! = |os_args| {
 	assignments = Draw.draw(names, previous, seed)?
 	givers = Draw.gift_givers(assignments)
 
-	for name in names {
-		gifts = assignments.get(name) ? |_| MissingAssignment(name)
+	# Assignments keep the order of people.json
+	for (name, gifts) in assignments.to_list() {
 		payload = {
 			recipient: name,
 			small1: gifts.small1,

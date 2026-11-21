@@ -31,7 +31,7 @@ just run --seed 42
 The same seed, people in the same order, previous draw, and dependency versions
 produce the same assignments and output links. Omitting `--seed` uses fresh
 randomness. Run with `--help` for usage. The program prints a link for each
-person; it does not send them.
+person, in `people.json` order; it does not send them.
 
 Each person gives and receives one gift in each of four categories, with four
 different recipients and no self assignments. At least five people are required.
