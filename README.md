@@ -45,3 +45,16 @@ Each person gives and receives one gift in each of four categories, with four
 different recipients and no self assignments. At least five people are required.
 The existing pairing algorithm retries random cycles, so a draw can take a long
 time or get stuck if earlier categories leave no valid cycle for a later one.
+
+## Roc port (in progress)
+
+The devenv shell also provides Roc 0.1.0_RC1. The Roc version lives in `roc/`
+and currently only reads `people.json`, shuffles it and has a base64 encoder;
+the draw itself is not ported yet.
+
+```sh
+just roc-check
+just roc-test
+just roc-run
+just roc-fuzz 30   # check fuzz examples, then explore for 30 seconds
+```
