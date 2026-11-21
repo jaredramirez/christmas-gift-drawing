@@ -4,78 +4,118 @@ app [main!] {
 }
 
 import pf.OsStr
-import pf.Stdout
 import pf.Path
-import pf.Random as Seed
-import rand.Random
+import pf.Random as PlatformRandom
+import pf.Stderr
+import pf.Stdout
+import Base64
+import Draw
 
-# Reads people.json and shuffles it with a platform seed. The draw itself is
-# not implemented yet.
+base_url : Str
+base_url = "https://2026.secret-santa.jaredramirez.omg.lol/?data="
 
-Person := { name : Str }.{
-	parser_for : _
-	encoder_for : _
+usage : Str
+usage =
+	\\Draw gift assignments from people.json and print a link for each person.
+	\\
+	\\Usage: main.roc [--seed INTEGER] [--previous FILE]
+	\\
+	\\  --seed INTEGER   Reproduce a draw with a seed from 0 to 4294967295
+	\\  --previous FILE  A previous draw to avoid repeating, as JSON mapping each
+	\\                   giver to their small1, small2, big, and book recipients
+	\\  --help           Show this message
+
+Args : {
+	seed : [Fixed(U32), Fresh],
+	previous : [File(Str), NoPrevious],
+	help : Bool,
 }
 
-alphabet : List(U8)
-alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".to_utf8()
-
-## Standard padded base64
-base64 : List(U8) -> Str
-base64 = |bytes| {
-	var $out = []
-	var $i = 0
-	len = List.len(bytes)
-	while $i < len {
-		b0 = List.get(bytes, $i) ?? 0
-		b1 = List.get(bytes, $i + 1) ?? 0
-		b2 = List.get(bytes, $i + 2) ?? 0
-		n = b0.to_u32().shl_wrap(16).bitwise_or(b1.to_u32().shl_wrap(8)).bitwise_or(b2.to_u32())
-		char = |shift| List.get(alphabet, n.shr_zf_wrap(shift).bitwise_and(63).to_u64()) ?? '='
-		remaining = len - $i
-		$out = List.concat(
-			$out,
-			[
-				char(18),
-				char(12),
-				if (remaining > 1) char(6) else '=',
-				if (remaining > 2) char(0) else '=',
-			],
-		)
-		$i = $i + 3
+parse_args : List(Str), Args -> Try(Args, [BadArgs(Str)])
+parse_args = |args, parsed|
+	match args {
+		[] => Ok(parsed)
+		["--help", .. as rest] => parse_args(rest, { ..parsed, help: True })
+		["--seed", value, .. as rest] =>
+			match U32.from_str(value) {
+				Ok(seed) => parse_args(rest, { ..parsed, seed: Fixed(seed) })
+				Err(_) => Err(BadArgs("--seed must be an integer from 0 to 4294967295, but got ${value}"))
+			}
+		["--previous", path, .. as rest] => parse_args(rest, { ..parsed, previous: File(path) })
+		[other, ..] => Err(BadArgs("Unknown or incomplete argument: ${other}"))
 	}
-	Str.from_utf8($out) ?? ""
+
+## Read and parse a JSON file
+read_json! : Str => Try(a, [ReadFailed(Str), ParseFailed(Str, Str)]) where [a.Json.Parseable([InvalidJson(Str)])]
+read_json! = |name| {
+	path : Path
+	path = Path.from_os_str(OsStr.from_str(name))
+	contents = path.read_utf8!() ? |_| ReadFailed(name)
+	Json.parse(contents).map_err(|InvalidJson(msg)| ParseFailed(name, msg))
 }
 
-main! : List(OsStr) => Try({}, _)
-main! = |_args| {
-	people_path : Path
-	people_path = "people.json"
-	json = people_path.read_utf8!()?
-	people : List(Person)
-	people = Json.parse(json)?
+run! = |os_args| {
+	args = parse_args(os_args.map(OsStr.display), { seed: Fresh, previous: NoPrevious, help: False })?
+	if args.help {
+		Stdout.line!(usage)?
+		return Ok({})
+	}
 
-	n = Seed.seed_u32!()?
-	shuffled = Random.step(Random.seed(n), Random.shuffle(people)).value
+	people : List({ name : Str })
+	people = read_json!("people.json")?
+	names = people.map(|person| person.name)
 
-	Stdout.line!("Read and shuffled ${List.len(shuffled).to_str()} people")?
+	previous : Draw.Assignments
+	previous = match args.previous {
+		File(path) => read_json!(path)?
+		NoPrevious => Dict.empty()
+	}
+
+	seed = match args.seed {
+		Fixed(value) => value
+		Fresh => PlatformRandom.seed_u32!()?
+	}
+
+	assignments = Draw.draw(names, previous, seed)?
+	givers = Draw.gift_givers(assignments)
+
+	for name in names {
+		gifts = assignments.get(name) ? |_| MissingAssignment(name)
+		payload = {
+			recipient: name,
+			small1: gifts.small1,
+			small2: gifts.small2,
+			big: gifts.big,
+			book: gifts.book,
+			other_givers: Draw.other_givers(givers, gifts),
+		}
+		Stdout.line!("${name} : ${base_url}${Base64.encode(Json.to_str(payload).to_utf8())}")?
+	}
 	Ok({})
 }
 
-expect {
-	{ value, .. } = Random.step(Random.seed(42), Random.shuffle([1, 2, 3, 4, 5]))
-	value.sort() == [1, 2, 3, 4, 5]
-}
+error_message = |err|
+	match err {
+		BadArgs(msg) => "${msg}\n\n${usage}"
+		ReadFailed(name) => "Could not read ${name}"
+		ParseFailed(name, msg) => "Could not parse ${name}: ${msg}"
+		TooFewPeople(count) => "At least ${Draw.min_people.to_str()} people are needed, but there are ${count.to_str()}"
+		DuplicateNames(names) => "Names must be unique, but these repeat: ${Str.join_with(names, ", ")}"
+		UnknownPreviousNames(names) => "Names in the previous draw are not in people.json: ${Str.join_with(names, ", ")}"
+		CannotAvoidPrevious(names) =>
+			"No draw can avoid the previous one: these people have fewer than 2 others they did not give to last time: ${Str.join_with(names, ", ")}"
+		NotEnoughNewPairings(needed, room) =>
+			"No draw can avoid the previous one: it needs ${needed.to_str()} new pairings, but there is room for only ${room.to_str()}"
+		GaveUp => "Could not find a draw that avoids the previous one; try another seed"
+		other => "Unexpected error: ${Str.inspect(other)}"
+	}
 
-# RFC 4648 section 10 test vectors
-expect base64("".to_utf8()) == ""
-expect base64("f".to_utf8()) == "Zg=="
-expect base64("fo".to_utf8()) == "Zm8="
-expect base64("foo".to_utf8()) == "Zm9v"
-expect base64("foob".to_utf8()) == "Zm9vYg=="
-expect base64("fooba".to_utf8()) == "Zm9vYmE="
-expect base64("foobar".to_utf8()) == "Zm9vYmFy"
-
-# Non-UTF-8 bytes, checked against `base64 -w0`
-expect base64([0, 255, 128, 63, 191]) == "AP+AP78="
-expect base64([251, 255, 254]) == "+//+"
+main! : List(OsStr) => Try({}, _)
+main! = |args|
+	match run!(args) {
+		Ok({}) => Ok({})
+		Err(err) => {
+			Stderr.line!(error_message(err))?
+			Err(Exit(1))
+		}
+	}

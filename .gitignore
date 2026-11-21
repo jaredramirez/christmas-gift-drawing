@@ -5,5 +5,5 @@ people.json
 devenv.local.nix
 devenv.local.yaml
 last-year.json
-fuzz/out
+fuzz-out
 .roc-fuzz

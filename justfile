@@ -6,7 +6,7 @@ default:
 
 check:
     roc check main.roc
-    roc check fuzz/shuffle.roc
+    roc check fuzz.roc
 
 test:
     roc test main.roc
@@ -18,10 +18,10 @@ build:
     roc build main.roc
 
 fmt:
-    roc fmt main.roc fuzz
+    roc fmt main.roc Draw.roc Base64.roc fuzz.roc
 
 # Check the fuzz examples, then explore for the given number of seconds.
 fuzz seconds="30":
-    mkdir -p fuzz/out/corpus
-    roc build --fuzz fuzz/shuffle.roc --output=fuzz/out/shuffle
-    cd fuzz/out && ./shuffle check && ./shuffle explore corpus --time={{seconds}}
+    mkdir -p fuzz-out/corpus
+    roc build --fuzz fuzz.roc --output=fuzz-out/draw
+    cd fuzz-out && ./draw check && ./draw explore corpus --time={{seconds}}
