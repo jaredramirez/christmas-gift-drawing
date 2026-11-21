@@ -17,6 +17,7 @@ Draw := [].{
 		CannotAvoidPrevious(List(Str)),
 		NotEnoughNewPairings(U64, U64),
 		GaveUp,
+		MissingRecipient(Str),
 	]
 
 	## The fewest people that can each give to four different others
@@ -146,7 +147,8 @@ Draw := [].{
 				Ok(assignments) if within_repeat_limit(previous, assignments) => {
 					return Ok(assignments)
 				}
-				_ => {}
+				Ok(_) | Err(GaveUp) => {}
+				Err(MissingRecipient(giver)) => return Err(MissingRecipient(giver))
 			}
 			$attempts_left = $attempts_left - 1
 		}
@@ -156,7 +158,7 @@ Draw := [].{
 	## Pair up each gift type in turn, so no one gives the same gift type to the
 	## same person as last time or gives two gifts to one person. Earlier gift
 	## types can leave no valid pairing for a later one, so this can fail.
-	draw_once : List(Str), Assignments, Random.State -> { value : Try(Assignments, [GaveUp]), state : Random.State }
+	draw_once : List(Str), Assignments, Random.State -> { value : Try(Assignments, [GaveUp, MissingRecipient(Str)]), state : Random.State }
 	draw_once = |people, previous, seed| {
 		var $seed = seed
 		var $drawn = []
@@ -172,28 +174,29 @@ Draw := [].{
 			}
 		}
 
-		# $drawn holds one list of (giver, recipient) pairs per gift type, in
-		# gift_types order
-		by_type = $drawn.map(Dict.from_list)
-		recipient_of = |index, giver|
-			match by_type.get(index) {
-				Ok(pairs) => pairs.get(giver) ?? giver
-				Err(_) => giver
+		{ value: assemble(people, $drawn), state: $seed }
+	}
+
+	## Turn one list of (giver, recipient) pairs per gift type, in gift_types
+	## order, into each giver's gifts
+	assemble : List(Str), List(List((Str, Str))) -> Try(Assignments, [MissingRecipient(Str)])
+	assemble = |people, drawn| {
+		by_type = drawn.map(Dict.from_list)
+		recipient_of = |index, giver| {
+			pairs = by_type.get(index) ? |_| MissingRecipient(giver)
+			pairs.get(giver).map_err(|_| MissingRecipient(giver))
+		}
+		var $assignments = Dict.empty()
+		for giver in people {
+			gifts = {
+				small1: recipient_of(0, giver)?,
+				small2: recipient_of(1, giver)?,
+				big: recipient_of(2, giver)?,
+				book: recipient_of(3, giver)?,
 			}
-		assignments = Dict.from_list(
-			people.map(
-				|giver| (
-					giver,
-					{
-						small1: recipient_of(0, giver),
-						small2: recipient_of(1, giver),
-						big: recipient_of(2, giver),
-						book: recipient_of(3, giver),
-					},
-				),
-			),
-		)
-		{ value: Ok(assignments), state: $seed }
+			$assignments = $assignments.insert(giver, gifts)
+		}
+		Ok($assignments)
 	}
 
 	## Shuffle the people into a cycle, retrying until no pair is excluded
@@ -229,45 +232,42 @@ Draw := [].{
 		)
 
 	## Invert a draw: for each person, who gives them each gift type
-	gift_givers : Assignments -> Assignments
+	gift_givers : Assignments -> Try(Assignments, [MissingGiver(Str)])
 	gift_givers = |assignments| {
 		givers = assignments.to_list()
 		giver_of = |recipient, gift_type|
-			givers.find_first(|(_, gifts)| gift_type(gifts) == recipient).map_ok(|(giver, _)| giver) ?? recipient
-		Dict.from_list(
-			givers.map(
-				|(person, _)| (
-					person,
-					{
-						small1: giver_of(person, |g| g.small1),
-						small2: giver_of(person, |g| g.small2),
-						big: giver_of(person, |g| g.big),
-						book: giver_of(person, |g| g.book),
-					},
-				),
-			),
-		)
+			givers
+				.find_first(|(_, gifts)| gift_type(gifts) == recipient)
+				.map_ok(|(giver, _)| giver)
+				.map_err(|_| MissingGiver(recipient))
+		var $inverted = Dict.empty()
+		for (person, _) in givers {
+			gifts = {
+				small1: giver_of(person, |g| g.small1)?,
+				small2: giver_of(person, |g| g.small2)?,
+				big: giver_of(person, |g| g.big)?,
+				book: giver_of(person, |g| g.book)?,
+			}
+			$inverted = $inverted.insert(person, gifts)
+		}
+		Ok($inverted)
 	}
 
 	## For each of a giver's recipients, who gives that recipient the other gift
 	## types, keyed by gift type
-	other_givers : Assignments, Gifts(Str) -> Dict(Str, Dict(Str, Str))
-	other_givers = |givers, gifts|
-		Dict.from_list(
-			gift_types.map(
-				|(gift_type, to_recipient)| {
-					recipient = to_recipient(gifts)
-					others = match givers.get(recipient) {
-						Ok(recipient_givers) =>
-							gift_types
-								.keep_if(|(other_type, _)| other_type != gift_type)
-								.map(|(other_type, to_giver)| (other_type, to_giver(recipient_givers)))
-						Err(_) => []
-					}
-					(gift_type, Dict.from_list(others))
-				},
-			),
-		)
+	other_givers : Assignments, Gifts(Str) -> Try(Dict(Str, Dict(Str, Str)), [MissingGiver(Str)])
+	other_givers = |givers, gifts| {
+		var $others = Dict.empty()
+		for (gift_type, to_recipient) in gift_types {
+			recipient = to_recipient(gifts)
+			recipient_givers = givers.get(recipient) ? |_| MissingGiver(recipient)
+			by_type = gift_types
+				.keep_if(|(other_type, _)| other_type != gift_type)
+				.map(|(other_type, to_giver)| (other_type, to_giver(recipient_givers)))
+			$others = $others.insert(gift_type, Dict.from_list(by_type))
+		}
+		Ok($others)
+	}
 
 	## Every gift type is a full cycle, and everyone has four different
 	## recipients, none of them themselves
@@ -369,50 +369,39 @@ expect {
 }
 
 # gift_givers inverts each gift type
-expect
-	match Draw.draw(test_people, Dict.empty(), 7) {
-		Ok(assignments) => {
-			givers = Draw.gift_givers(assignments)
+expect {
+	inverts = |seed| {
+		assignments = Draw.draw(test_people, Dict.empty(), seed)?
+		givers = Draw.gift_givers(assignments)?
+		Ok(
 			assignments.to_list().all(
 				|(giver, gifts)|
-					Draw.gift_types.all(
-						|(_, gift_type)|
-							match givers.get(gift_type(gifts)) {
-								Ok(recipient_givers) => gift_type(recipient_givers) == giver
-								Err(_) => False
-							},
-					),
-			)
-		}
-		Err(_) => False
+					Draw.gift_types.all(|(_, gift_type)| givers.get(gift_type(gifts)).map_ok(gift_type) == Ok(giver)),
+			),
+		)
 	}
+	inverts(7) == Ok(True)
+}
 
 # other_givers lists the three other people giving to each recipient
-expect
-	match Draw.draw(test_people, Dict.empty(), 7) {
-		Ok(assignments) => {
-			givers = Draw.gift_givers(assignments)
-			assignments.to_list().all(
-				|(giver, gifts)| {
-					others = Draw.other_givers(givers, gifts)
-					Draw.gift_types.all(
-						|(gift_type, to_recipient)| {
-							recipient = to_recipient(gifts)
-							match others.get(gift_type) {
-								Ok(by_type) =>
-									by_type.len() == 3
-										and !by_type.contains(gift_type)
-										and by_type.to_list().all(
-											|(_, other_giver)|
-												other_giver != giver
-													and assignments.get(other_giver).map_ok(|g| Draw.recipients(g).contains(recipient)) == Ok(True),
-										)
-								Err(_) => False
-							}
-						},
-					)
-				},
-			)
+expect {
+	lists_others = |seed| {
+		assignments = Draw.draw(test_people, Dict.empty(), seed)?
+		givers = Draw.gift_givers(assignments)?
+		var $all_ok = True
+		for (giver, gifts) in assignments.to_list() {
+			others = Draw.other_givers(givers, gifts)?
+			for (gift_type, to_recipient) in Draw.gift_types {
+				recipient = to_recipient(gifts)
+				by_type = others.get(gift_type)?
+				gives_to_recipient = |other_giver| assignments.get(other_giver).map_ok(|g| Draw.recipients(g).contains(recipient)) == Ok(True)
+				$all_ok = $all_ok
+					and by_type.len() == 3
+					and !by_type.contains(gift_type)
+					and by_type.to_list().all(|(_, other_giver)| other_giver != giver and gives_to_recipient(other_giver))
+			}
 		}
-		Err(_) => False
+		Ok($all_ok)
 	}
+	lists_others(7) == Ok(True)
+}

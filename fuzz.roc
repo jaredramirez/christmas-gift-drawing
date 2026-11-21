@@ -27,7 +27,10 @@ test! = |{ seed, extra_people }| {
 		crash "draw broke a gift rule"
 	}
 
-	givers = Draw.gift_givers(previous)
+	givers = match Draw.gift_givers(previous) {
+		Ok(inverted) => inverted
+		Err(err) => crash "gift_givers failed: ${Str.inspect(err)}"
+	}
 	inverts = previous.to_list().all(
 		|(giver, gifts)|
 			Draw.gift_types.all(|(_, gift_type)| givers.get(gift_type(gifts)).map_ok(gift_type) == Ok(giver)),

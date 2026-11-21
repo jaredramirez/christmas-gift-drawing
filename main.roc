@@ -77,7 +77,7 @@ run! = |os_args| {
 	}
 
 	assignments = Draw.draw(names, previous, seed)?
-	givers = Draw.gift_givers(assignments)
+	givers = Draw.gift_givers(assignments)?
 
 	# Assignments keep the order of people.json
 	for (name, gifts) in assignments.to_list() {
@@ -87,9 +87,10 @@ run! = |os_args| {
 			small2: gifts.small2,
 			big: gifts.big,
 			book: gifts.book,
-			other_givers: Draw.other_givers(givers, gifts),
+			other_givers: Draw.other_givers(givers, gifts)?,
 		}
-		Stdout.line!("${name} : ${base_url}${Base64.encode(Json.to_str(payload).to_utf8())}")?
+		data = Base64.encode(Json.to_str(payload).to_utf8())?
+		Stdout.line!("${name} : ${base_url}${data}")?
 	}
 	Ok({})
 }
@@ -107,6 +108,8 @@ error_message = |err|
 		NotEnoughNewPairings(needed, room) =>
 			"No draw can avoid the previous one: it needs ${needed.to_str()} new pairings, but there is room for only ${room.to_str()}"
 		GaveUp => "Could not find a draw that avoids the previous one; try another seed"
+		MissingRecipient(name) => "Bug: the draw has no recipient for ${name}"
+		MissingGiver(name) => "Bug: the draw has no giver for ${name}"
 		other => "Unexpected error: ${Str.inspect(other)}"
 	}
 
