@@ -9,8 +9,8 @@ import pf.Path
 import pf.Random as Seed
 import rand.Random
 
-# Spike: read people.json, shuffle it with a platform seed, and base64 encode
-# a payload. The draw itself is not ported yet.
+# Reads people.json and shuffles it with a platform seed. The draw itself is
+# not implemented yet.
 
 Person := { name : Str }.{
 	parser_for : _
@@ -33,12 +33,15 @@ base64 = |bytes| {
 		n = b0.to_u32().shl_wrap(16).bitwise_or(b1.to_u32().shl_wrap(8)).bitwise_or(b2.to_u32())
 		char = |shift| List.get(alphabet, n.shr_zf_wrap(shift).bitwise_and(63).to_u64()) ?? '='
 		remaining = len - $i
-		$out = List.concat($out, [
-			char(18),
-			char(12),
-			if remaining > 1 char(6) else '=',
-			if remaining > 2 char(0) else '=',
-		])
+		$out = List.concat(
+			$out,
+			[
+				char(18),
+				char(12),
+				if (remaining > 1) char(6) else '=',
+				if (remaining > 2) char(0) else '=',
+			],
+		)
 		$i = $i + 3
 	}
 	Str.from_utf8($out) ?? ""

@@ -1,26 +1,19 @@
 # Christmas Secret Santa Generator
 
 Development requires [Nix](https://nixos.org/download/) and
-[devenv 2.x](https://devenv.sh/getting-started/). The environment pins GHC 9.14.1
-and devenv modules v2.1.2; `devenv.lock` pins the Nix inputs.
+[devenv 2.x](https://devenv.sh/getting-started/). The environment pins
+Roc 0.1.0_RC1 and devenv modules v2.1.2; `devenv.lock` pins the Nix inputs.
+The app uses the [basic-cli](https://github.com/roc-lang/basic-cli) platform
+and [roc-random](https://github.com/kili-ilo/roc-random), which Roc downloads
+on first use.
 
 ```sh
 devenv shell
-cabal update
-just build
+just check
 just test
 ```
 
 With direnv installed, `direnv allow` activates the same environment automatically.
-Haskell Language Server 2.15.0.0 comes from a separate, locked `haskell-updates`
-Nixpkgs input, using the same GHC as the project. Nix uses its binary cache plus
-the HLS and nix-community caches where builds are available; missing packages
-are built locally once and reused. `ghciwatch`, `fourmolu`, and `just` are included.
-
-For automatic reloads, use `just dev`; `just test-watch` reloads test edits and
-restarts GHCi on library edits so Cabal rebuilds the library before rerunning tests.
-These use the
-[ghciwatch CLI](https://mercurytechnologies.github.io/ghciwatch/cli.html).
 
 Create `people.json` with an ordered list of people (names must be unique):
 
@@ -28,33 +21,16 @@ Create `people.json` with an ordered list of people (names must be unique):
 [{"name":"Alice"},{"name":"Bob"},{"name":"Carol"},{"name":"Dave"},{"name":"Eve"},{"name":"Frank"},{"name":"Grace"},{"name":"Heidi"}]
 ```
 
-Run a random draw, or supply an integer seed to reproduce one:
+Then run the app:
 
 ```sh
-cabal run christmas-gift-drawing-exe
-cabal run christmas-gift-drawing-exe -- --seed 42
-# Equivalent just command:
-just run --seed 42
+just run
 ```
 
-The same seed, people in the same order, and dependency versions produce the same
-assignments and output links. Omitting `--seed` uses fresh randomness. Run with
-`--help` for usage. The program prints links; it does not send emails.
+The app currently reads `people.json` and shuffles it; the draw itself is not
+implemented yet. Each person will give and receive one gift in each of four
+categories, with four different recipients and no self assignments. Past draws
+are recorded in `past-gens/`.
 
-Each person gives and receives one gift in each of four categories, with four
-different recipients and no self assignments. At least five people are required.
-The existing pairing algorithm retries random cycles, so a draw can take a long
-time or get stuck if earlier categories leave no valid cycle for a later one.
-
-## Roc port (in progress)
-
-The devenv shell also provides Roc 0.1.0_RC1. The Roc version lives in `roc/`
-and currently only reads `people.json`, shuffles it and has a base64 encoder;
-the draw itself is not ported yet.
-
-```sh
-just roc-check
-just roc-test
-just roc-run
-just roc-fuzz 30   # check fuzz examples, then explore for 30 seconds
-```
+`just fuzz 30` builds the [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz)
+targets in `fuzz/`, checks their examples, then explores for 30 seconds.

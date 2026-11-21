@@ -4,42 +4,24 @@ set positional-arguments
 default:
     @just --list
 
-build:
-    cabal build all
-
-run *args:
-    cabal run christmas-gift-drawing-exe -- "$@"
-
-repl:
-    cabal repl christmas-gift-drawing
+check:
+    roc check main.roc
+    roc check fuzz/shuffle.roc
 
 test:
-    cabal test all
+    roc test main.roc
 
-dev:
-    ghciwatch \
-        --command "cabal repl christmas-gift-drawing" \
-        --watch src --watch christmas-gift-drawing.cabal --clear
+run *args:
+    roc main.roc "$@"
 
-test-watch:
-    ghciwatch \
-        --command "cabal repl christmas-gift-drawing-test" \
-        --watch src --watch test --watch christmas-gift-drawing.cabal \
-        --restart-glob 'src/**/*.hs' \
-        --test-ghci "Main.main" --clear
+build:
+    roc build main.roc
 
-roc-check:
-    roc check roc/main.roc
-    roc check roc/fuzz/shuffle.roc
-
-roc-test:
-    roc test roc/main.roc
-
-roc-run *args:
-    roc roc/main.roc "$@"
+fmt:
+    roc fmt main.roc fuzz
 
 # Check the fuzz examples, then explore for the given number of seconds.
-roc-fuzz seconds="30":
-    mkdir -p roc/fuzz/out/corpus
-    roc build --fuzz roc/fuzz/shuffle.roc --output=roc/fuzz/out/shuffle
-    cd roc/fuzz/out && ./shuffle check && ./shuffle explore corpus --time={{seconds}}
+fuzz seconds="30":
+    mkdir -p fuzz/out/corpus
+    roc build --fuzz fuzz/shuffle.roc --output=fuzz/out/shuffle
+    cd fuzz/out && ./shuffle check && ./shuffle explore corpus --time={{seconds}}

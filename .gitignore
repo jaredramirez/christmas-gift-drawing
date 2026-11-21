@@ -1,11 +1,9 @@
 .direnv
 .env
-dist-newstyle
-result
 people.json
 .devenv
 devenv.local.nix
 devenv.local.yaml
 last-year.json
-roc/fuzz/out
+fuzz/out
 .roc-fuzz
