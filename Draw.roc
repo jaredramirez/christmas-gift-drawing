@@ -55,7 +55,10 @@ Draw := [].{
 	make_pairs = |list|
 		match list {
 			[] => []
-			[first, ..] => List.map2(list, list.drop_first(1).append(first), |a, b| (a, b))
+			[first, ..] => {
+				rotated = list.drop_first(1).append(first)
+				list.map2(rotated, |a, b| (a, b))
+			}
 		}
 
 	## Draw gifts for the people, so that no one gives the same gift type to the
@@ -71,31 +74,33 @@ Draw := [].{
 			return Err(TooFewPeople(count))
 		}
 
-		duplicates = unique(people.keep_if(|name| people.count_if(|other| other == name) > 1))
+		duplicates = repeated(people)
 		if !duplicates.is_empty() {
-			return Err(DuplicateNames(duplicates))
+			return Err(DuplicateNames(duplicates.to_list()))
 		}
 
 		previous_names = previous.to_list().join_map(|(giver, gifts)| [giver].concat(recipients(gifts)))
-		unknown = unique(previous_names.keep_if(|name| !people.contains(name)))
+		unknown = Set.from_list(previous_names.keep_if(|name| !people.contains(name)))
 		if !unknown.is_empty() {
-			return Err(UnknownPreviousNames(unknown))
+			return Err(UnknownPreviousNames(unknown.to_list()))
 		}
 
 		check_previous(people, previous)?
 		draw_valid(people, previous, Random.seed(seed))
 	}
 
-	## The items in their first order, without repeats
-	unique : List(Str) -> List(Str)
-	unique = |items| {
-		var $seen = []
+	## The items that appear more than once
+	repeated : List(Str) -> Set(Str)
+	repeated = |items| {
+		var $seen = Set.empty()
+		var $repeats = Set.empty()
 		for item in items {
-			if !$seen.contains(item) {
-				$seen = $seen.append(item)
+			if $seen.contains(item) {
+				$repeats = $repeats.insert(item)
 			}
+			$seen = $seen.insert(item)
 		}
-		$seen
+		$repeats
 	}
 
 	## Reject previous draws that leave no room for a new one, using counting
@@ -346,6 +351,7 @@ expect List.from_iter((0.U32).until(20)).all(
 # Bad inputs are rejected before drawing
 expect Draw.draw(["1", "2", "3", "4"], Dict.empty(), 0) == Err(TooFewPeople(4))
 expect Draw.draw(["1", "2", "3", "4", "1"], Dict.empty(), 0) == Err(DuplicateNames(["1"]))
+expect Draw.draw(["1", "2", "3", "2", "1", "1"], Dict.empty(), 0) == Err(DuplicateNames(["2", "1"]))
 
 expect {
 	previous = Dict.from_list([("9", { small1: "1", small2: "2", big: "3", book: "9" })])
