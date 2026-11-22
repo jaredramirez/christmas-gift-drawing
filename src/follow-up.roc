@@ -148,18 +148,17 @@ rebuild = |people| {
 Message : { name : Str, message : Str }
 
 ## The follow-up text in kringle-bot's voice (see ../santa-game/COPY.md), with
-## the link on a line of its own
+## the link last
 message_text : Str -> Str
 message_text = |link|
 	Str.join_with(
 		[
-			"kringle-bot> ho-ho-hello! it's me, kringle-bot. i realized you might want to know who else is getting gifts for the people on your list, so you can strategize. (⌐■_■)",
-			"kringle-bot> here's your upgraded link. this intel was definitely not traded for pops' chipy-chips. (・_・;)",
+			"ho-ho-hello! it's me, kringle-bot. i realized you might want to know who else is getting gifts for the people on your list, so you can strategize (⌐■_■)",
+			"open it on the same device and browser you used last time and you won't have to redo my checks. or on a computer, cmd+shift+option+k (mac) or ctrl+shift+alt+k skips them anyway.",
+			"i won't tell santa. (it will appear in access logs though) (^_^;)",
 			link,
-			"kringle-bot> open it on the same device and browser you used last time and you won't have to redo my checks. (^_^)",
-			"kringle-bot> on a computer, cmd+shift+option+k (mac) or ctrl+shift+alt+k skips them anyway. i won't tell santa. (i will log it.) (˘ω˘)",
 		],
-		"\n",
+		"\n\n",
 	)
 
 ## Each person's follow-up text, with a link that adds other_givers
@@ -534,7 +533,10 @@ expect {
 					other_givers: Draw.other_givers(givers, gifts)?,
 				}).to_utf8(),
 			)?
-			$all_ok = $all_ok and link_lines == ["${base_url}${expected}"] and m.message == message_text("${base_url}${expected}")
+			$all_ok = $all_ok
+				and link_lines == ["${base_url}${expected}"]
+				and m.message.ends_with("\n${base_url}${expected}")
+				and m.message == message_text("${base_url}${expected}")
 		}
 		Ok($all_ok)
 	}
