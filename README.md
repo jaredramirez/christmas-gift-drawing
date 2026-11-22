@@ -53,10 +53,10 @@ recorded in `past-gens/`.
 
 ## Layout
 
-- `main.roc`: the command line app
-- `Draw.roc`: the draw, as pure functions of the people, previous draw, and seed
-- `Base64.roc`: base64 encoding for the links
-- `fuzz.roc`: a [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz)
+- `src/main.roc`: the command line app
+- `src/Draw.roc`: the draw, as pure functions of the people, previous draw, and seed
+- `src/Base64.roc`: base64 encoding for the links
+- `src/fuzz.roc`: a [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz)
   target that checks the draw rules. `just fuzz 30` checks its examples, then
   explores for 30 seconds.
 - `roc-bugs/`: small reproductions of problems found in Roc and its libraries

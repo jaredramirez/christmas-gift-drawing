@@ -5,23 +5,23 @@ default:
     @just --list
 
 check:
-    roc check main.roc
-    roc check fuzz.roc
+    roc check src/main.roc
+    roc check src/fuzz.roc
 
 test:
-    roc test main.roc
+    roc test src/main.roc
 
 run *args:
-    roc main.roc "$@"
+    roc src/main.roc "$@"
 
 build:
-    roc build main.roc
+    roc build src/main.roc --output=main
 
 fmt:
-    roc fmt main.roc Draw.roc Base64.roc fuzz.roc
+    roc fmt src
 
 # Check the fuzz examples, then explore for the given number of seconds.
 fuzz seconds="30":
     mkdir -p fuzz-out/corpus
-    roc build --fuzz fuzz.roc --output=fuzz-out/draw
+    roc build --fuzz src/fuzz.roc --output=fuzz-out/draw
     cd fuzz-out && ./draw check && ./draw explore corpus --time={{seconds}}
