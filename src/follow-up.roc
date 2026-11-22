@@ -147,6 +147,21 @@ rebuild = |people| {
 
 Message : { name : Str, message : Str }
 
+## The follow-up text in kringle-bot's voice (see ../santa-game/COPY.md), with
+## the link on a line of its own
+message_text : Str -> Str
+message_text = |link|
+	Str.join_with(
+		[
+			"kringle-bot> ho-ho-hello! it's me, kringle-bot. i realized you might want to know who else is getting gifts for the people on your list, so you can strategize. (⌐■_■)",
+			"kringle-bot> here's your upgraded link. this intel was definitely not traded for pops' chipy-chips. (・_・;)",
+			link,
+			"kringle-bot> open it on the same device and browser you used last time and you won't have to redo my checks. (^_^)",
+			"kringle-bot> on a computer, cmd+shift+option+k (mac) or ctrl+shift+alt+k skips them anyway. i won't tell santa. (i will log it.) (˘ω˘)",
+		],
+		"\n",
+	)
+
 ## Each person's follow-up text, with a link that adds other_givers
 build_messages : Draw.Assignments -> Try(List(Message), [MissingGiver(Str), OutOfBounds, BadUtf8(_)])
 build_messages = |assignments| {
@@ -162,8 +177,7 @@ build_messages = |assignments| {
 			other_givers: Draw.other_givers(givers, gifts)?,
 		}
 		data = Base64.encode(Json.to_str(payload).to_utf8())?
-		message = "Secret Santa update: your link now also shows who else is giving to each of your people: ${base_url}${data}"
-		$messages = $messages.append({ name, message })
+		$messages = $messages.append({ name, message: message_text("${base_url}${data}") })
 	}
 	Ok($messages)
 }
@@ -508,7 +522,7 @@ expect {
 		givers = Draw.gift_givers(assignments)?
 		var $all_ok = List.len(messages) == List.len(test_people)
 		for m in messages {
-			{ after: data, .. } = m.message.split_first(base_url)?
+			link_lines = m.message.split_on("\n").keep_if(|line| line.contains(base_url))
 			gifts = assignments.get(m.name)?
 			expected = Base64.encode(
 				Json.to_str({
@@ -520,7 +534,7 @@ expect {
 					other_givers: Draw.other_givers(givers, gifts)?,
 				}).to_utf8(),
 			)?
-			$all_ok = $all_ok and data == expected and !m.message.contains("\n")
+			$all_ok = $all_ok and link_lines == ["${base_url}${expected}"] and m.message == message_text("${base_url}${expected}")
 		}
 		Ok($all_ok)
 	}
