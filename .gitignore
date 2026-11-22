@@ -8,3 +8,6 @@ last-year.json
 fuzz-out
 .roc-fuzz
 /main
+follow-up.jsonl
+phones.json
+sent.log

@@ -55,7 +55,11 @@ recorded in `past-gens/`.
 
 - `src/main.roc`: the command line app
 - `src/Draw.roc`: the draw, as pure functions of the people, previous draw, and seed
-- `src/Base64.roc`: base64 encoding for the links
+- `src/Base64.roc`: base64 encoding and decoding for the links
+- `src/follow-up.roc`: texts everyone a new link with `other_givers` over iMessage,
+  rebuilt from `past-gens/2026.txt`. `just follow-up prepare` writes the messages,
+  `just follow-up contacts` saves phone numbers to `phones.json`, and
+  `just follow-up send` lists who would get a text (`--send` to send).
 - `src/fuzz.roc`: a [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz)
   target that checks the draw rules. `just fuzz 30` checks its examples, then
   explores for 30 seconds.

@@ -7,12 +7,18 @@ default:
 check:
     roc check src/main.roc
     roc check src/fuzz.roc
+    roc check src/follow-up.roc
 
 test:
     roc test src/main.roc
+    roc test src/follow-up.roc
 
 run *args:
     roc src/main.roc "$@"
+
+# Send the follow-up texts: prepare, contacts, then send. See --help.
+follow-up *args:
+    roc src/follow-up.roc "$@"
 
 build:
     roc build src/main.roc --output=main
